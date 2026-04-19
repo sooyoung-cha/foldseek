@@ -250,6 +250,14 @@ LocalParameters::LocalParameters() :
     expandmultimer.push_back(&PARAM_THREADS);
     expandmultimer.push_back(&PARAM_V);
 
+    // chainmultimerprefilter
+    chainmultimerprefilter.push_back(&PARAM_MIN_ASSIGNED_CHAINS_THRESHOLD);
+    chainmultimerprefilter.push_back(&PARAM_MONOMER_INCLUDE_MODE);
+    chainmultimerprefilter.push_back(&PARAM_COV_MODE);
+    chainmultimerprefilter.push_back(&PARAM_MIN_ALIGNED_CHAINS);
+    chainmultimerprefilter.push_back(&PARAM_THREADS);
+    chainmultimerprefilter.push_back(&PARAM_V);
+
     // convert2pdb
     convert2pdb.push_back(&PARAM_PDB_OUTPUT_MODE);
     convert2pdb.push_back(&PARAM_THREADS);
@@ -305,9 +313,18 @@ LocalParameters::LocalParameters() :
     // multimerclusterworkflow
     multimerclusterworkflow  = combineList(multimersearchworkflow, clust);
 
+    // multimerclusterfastworkflow
+    multimerclusterfastworkflow = combineList(structureclusterworkflow, chainmultimerprefilter);
+    multimerclusterfastworkflow = combineList(multimerclusterfastworkflow, scoremultimer);
+    multimerclusterfastworkflow = combineList(multimerclusterfastworkflow, clust);
+
     //easymultimerclusterworkflow
     easymultimerclusterworkflow = combineList(structurecreatedb, multimerclusterworkflow);
     easymultimerclusterworkflow = combineList(easymultimerclusterworkflow, result2repseq);
+
+    // easymultimerclusterfastworkflow
+    easymultimerclusterfastworkflow = combineList(structurecreatedb, multimerclusterfastworkflow);
+    easymultimerclusterfastworkflow = combineList(easymultimerclusterfastworkflow, result2repseq);
 
     // set masking
     maskMode = 0;

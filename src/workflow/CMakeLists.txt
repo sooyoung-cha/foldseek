@@ -9,6 +9,8 @@ set(workflow_source_files
         workflow/EasyMultimerSearch.cpp
         workflow/MultimerSearch.cpp
         workflow/MultimerCluster.cpp
+        workflow/MultimerClusterFast.cpp
         workflow/EasyMultimerCluster.cpp
+        workflow/EasyMultimerClusterFast.cpp
         PARENT_SCOPE
         )

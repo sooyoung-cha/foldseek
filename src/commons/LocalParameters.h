@@ -125,11 +125,14 @@ public:
     std::vector<MMseqsParameter *> compressca;
     std::vector<MMseqsParameter *> scoremultimer;
     std::vector<MMseqsParameter *> multimerclusterworkflow;
+    std::vector<MMseqsParameter *> multimerclusterfastworkflow;
     std::vector<MMseqsParameter *> easymultimerclusterworkflow;
+    std::vector<MMseqsParameter *> easymultimerclusterfastworkflow;
     std::vector<MMseqsParameter *> multimersearchworkflow;
     std::vector<MMseqsParameter *> easymultimersearchworkflow;
     std::vector<MMseqsParameter *> createmultimerreport;
     std::vector<MMseqsParameter *> expandmultimer;
+    std::vector<MMseqsParameter *> chainmultimerprefilter;
     std::vector<MMseqsParameter *> convert2pdb;
     std::vector<MMseqsParameter *> makepaddeddb;
     std::vector<MMseqsParameter *> result2structprofile;

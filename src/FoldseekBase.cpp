@@ -330,7 +330,19 @@ std::vector<Command> foldseekCommands = {
                                         {"clusterDB", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &FoldSeekDbValidator::clusterDb },
                                         {"tmpDir", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::directory }
                 }
-        },     
+        },
+        {"multimercluster_fast", multimercluster_fast, &localPar.multimerclusterfastworkflow, COMMAND_MAIN,
+                "Fast multimer level cluster using chain-cluster candidates",
+                "# Clustering of PDB DB with reused chain-cluster alignments\n"
+                "foldseek multimercluster_fast queryDB clusterDB tmp\n",
+                "Sooyoung Cha <ellen2g77@gmail.com>",
+                "<i:sequenceDB> <o:clusterDB> <tmpDir>",
+                CITATION_FOLDSEEK_MULTIMER, {
+                                        {"sequenceDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::sequenceDb},
+                                        {"clusterDB", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &FoldSeekDbValidator::clusterDb },
+                                        {"tmpDir", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::directory }
+                }
+        },
         {"easy-multimercluster", easymultimercluster, &localPar.easymultimerclusterworkflow, COMMAND_EASY,
                 "Multimer level cluster",
                 "#Clustering of PDB files\n"
@@ -352,7 +364,22 @@ std::vector<Command> foldseekCommands = {
                                         {"clusterPrefix", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::flatfile},
                                         {"tmpDir", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::directory }
                 }
-        },     
+        },
+        {"easy-multimerclusterfast", easymultimerclusterfast, &localPar.easymultimerclusterfastworkflow, COMMAND_EASY,
+                "Fast multimer level cluster",
+                "# Clustering of PDB files with reused chain-cluster alignments\n"
+                "foldseek easy-multimerclusterfast examples/ result tmp\n"
+                "# Cluster output\n"
+                "#  - result_rep_seq.fasta: Representatives\n"
+                "#  - result_cluster.tsv:   Adjacency list\n\n",
+                "Sooyoung Cha <ellen2g77@gmail.com>",
+                "<i:PDB|mmCIF[.gz]> ... <i:PDB|mmCIF[.gz]> <o:clusterPrefix> <tmpDir>",
+                CITATION_FOLDSEEK_MULTIMER, {
+                                        {"PDB|mmCIF[.gz|.bz2]", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA|DbType::VARIADIC, &FoldSeekDbValidator::flatfileStdinAndFolder},
+                                        {"clusterPrefix", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::flatfile},
+                                        {"tmpDir", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::directory }
+                }
+        },
         {"multimersearch", multimersearch, &localPar.multimersearchworkflow, COMMAND_MAIN,
                 "Multimer level search",
                 "# Search a single/multiple PDB file against a set of PDB files and get multimer level alignments\n"
@@ -432,7 +459,19 @@ std::vector<Command> foldseekCommands = {
         },
         {"expandcomplex", expandmultimer, &localPar.expandmultimer, COMMAND_HIDDEN,
                 "", NULL, "", "", CITATION_FOLDSEEK_MULTIMER, {{"",DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, NULL}}
-        },        
+        },
+        {"chainmultimerprefilter", chainmultimerprefilter, &localPar.chainmultimerprefilter, COMMAND_HIDDEN,
+                "",
+                NULL,
+                "Sooyoung Cha <ellen2g77@gmail.com>",
+                "<i:queryDB> <i:targetDB> <i:chainClusterDB> <o:prefilterDB>",
+                CITATION_FOLDSEEK_MULTIMER, {
+                                        {"queryDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::sequenceDb },
+                                        {"targetDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::sequenceDb },
+                                        {"chainClusterDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &FoldSeekDbValidator::clusterDb },
+                                        {"prefilterDB", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &FoldSeekDbValidator::prefilterDb }
+                                }
+        },
         {"version",              versionstring,        &localPar.empty,                COMMAND_HIDDEN,
                 "",
                 NULL,

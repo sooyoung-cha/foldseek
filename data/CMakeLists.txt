@@ -20,7 +20,9 @@ set(COMPILED_RESOURCES
         multimersearch.sh
         easymultimersearch.sh
         multimercluster.sh
+        multimercluster_fast.sh
         easymultimercluster.sh
+        easymultimerclusterfast.sh
         )
 
 set(GENERATED_OUTPUT_HEADERS "")
