@@ -10,6 +10,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <string>
 #include <vector>
 
@@ -120,7 +122,8 @@ static bool edgePairLess(const EdgePair &lhs, const EdgePair &rhs) {
 }
 
 static void flushChunk(std::vector<EdgePair> &buffer,
-                       const std::string &prefix,
+                       const std::string &tempDir,
+                       unsigned int bucketId,
                        unsigned int threadIdx,
                        unsigned int chunkId,
                        std::vector<std::string> &chunkFiles) {
@@ -129,7 +132,7 @@ static void flushChunk(std::vector<EdgePair> &buffer,
     }
 
     std::sort(buffer.begin(), buffer.end(), edgePairLess);
-    const std::string path = prefix + "." + SSTR(threadIdx) + "." + SSTR(chunkId);
+    const std::string path = tempDir + "/bucket" + SSTR(bucketId) + ".thread" + SSTR(threadIdx) + ".chunk" + SSTR(chunkId);
     FILE *handle = std::fopen(path.c_str(), "wb");
     if (handle == NULL) {
         Debug(Debug::ERROR) << "Could not open chunk file " << path << " for writing\n";
@@ -155,6 +158,13 @@ struct ChunkCursor {
 static bool readNext(ChunkCursor &cursor) {
     cursor.hasValue = (std::fread(&cursor.value, sizeof(EdgePair), 1, cursor.handle) == 1);
     return cursor.hasValue;
+}
+
+static void ensureDirExists(const std::string &path) {
+    if (mkdir(path.c_str(), 0775) != 0 && errno != EEXIST) {
+        Debug(Debug::ERROR) << "Could not create temp directory " << path << "\n";
+        EXIT(EXIT_FAILURE);
+    }
 }
 
 int chainmultimerprefilter(int argc, const char **argv, const Command &command) {
@@ -197,9 +207,11 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
         }
     }
 
-    const std::string chunkPrefix = par.db4 + ".pairs";
+    const unsigned int bucketCount = static_cast<unsigned int>(std::max(1, par.threads));
+    const std::string tempDir = par.db4 + ".tmp";
+    ensureDirExists(tempDir);
     const size_t maxBufferedPairs = 1000000;
-    std::vector<std::vector<std::string> > chunkFilesByThread(static_cast<size_t>(std::max(1, par.threads)));
+    std::vector<std::vector<std::string> > chunkFilesByBucket(bucketCount);
 
     Debug::Progress progress(clusterDbr.getSize());
 #pragma omp parallel
@@ -208,9 +220,12 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
 #ifdef OPENMP
         threadIdx = static_cast<unsigned int>(omp_get_thread_num());
 #endif
-        std::vector<EdgePair> edgeBuffer;
-        edgeBuffer.reserve(maxBufferedPairs);
-        unsigned int chunkId = 0;
+        std::vector<std::vector<EdgePair> > edgeBuffers(bucketCount);
+        std::vector<unsigned int> chunkIds(bucketCount, 0);
+        for (unsigned int bucketId = 0; bucketId < bucketCount; ++bucketId) {
+            edgeBuffers[bucketId].reserve(std::max<size_t>(1024, maxBufferedPairs / bucketCount));
+        }
+        std::vector<std::vector<std::string> > localChunkFiles(bucketCount);
 
 #pragma omp for schedule(dynamic, 1)
         for (size_t entryId = 0; entryId < clusterDbr.getSize(); ++entryId) {
@@ -249,28 +264,34 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
 
                     for (size_t qChainIdx = 0; qChainIdx < queryGroups[qIdx].chains.size(); ++qChainIdx) {
                         const unsigned int queryChainKey = queryGroups[qIdx].chains[qChainIdx];
+                        const unsigned int bucketId = queryChainKey % bucketCount;
                         for (size_t tChainIdx = 0; tChainIdx < targetGroups[tIdx].chains.size(); ++tChainIdx) {
                             EdgePair pair;
                             pair.queryChainKey = queryChainKey;
                             pair.targetChainKey = targetGroups[tIdx].chains[tChainIdx];
-                            edgeBuffer.push_back(pair);
+                            edgeBuffers[bucketId].push_back(pair);
+                        }
+                        if (edgeBuffers[bucketId].size() >= maxBufferedPairs) {
+                            flushChunk(edgeBuffers[bucketId], tempDir, bucketId, threadIdx, chunkIds[bucketId]++, localChunkFiles[bucketId]);
                         }
                     }
                 }
             }
-
-            if (edgeBuffer.size() >= maxBufferedPairs) {
-                flushChunk(edgeBuffer, chunkPrefix, threadIdx, chunkId++, chunkFilesByThread[threadIdx]);
-            }
             progress.updateProgress();
         }
 
-        flushChunk(edgeBuffer, chunkPrefix, threadIdx, chunkId++, chunkFilesByThread[threadIdx]);
-    }
+        for (unsigned int bucketId = 0; bucketId < bucketCount; ++bucketId) {
+            flushChunk(edgeBuffers[bucketId], tempDir, bucketId, threadIdx, chunkIds[bucketId]++, localChunkFiles[bucketId]);
+        }
 
-    std::vector<std::string> chunkFiles;
-    for (size_t threadIdx = 0; threadIdx < chunkFilesByThread.size(); ++threadIdx) {
-        chunkFiles.insert(chunkFiles.end(), chunkFilesByThread[threadIdx].begin(), chunkFilesByThread[threadIdx].end());
+#pragma omp critical
+        {
+            for (unsigned int bucketId = 0; bucketId < bucketCount; ++bucketId) {
+                chunkFilesByBucket[bucketId].insert(chunkFilesByBucket[bucketId].end(),
+                                                    localChunkFiles[bucketId].begin(),
+                                                    localChunkFiles[bucketId].end());
+            }
+        }
     }
 
     DBWriter resultWriter(par.db4.c_str(), par.db4Index.c_str(), static_cast<unsigned int>(par.threads),
@@ -295,79 +316,88 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
     }
     std::vector<char> seenQueryChains(maxQueryChainKey + 1, 0);
 
-    std::vector<ChunkCursor> cursors;
-    cursors.reserve(chunkFiles.size());
-    for (size_t chunkIdx = 0; chunkIdx < chunkFiles.size(); ++chunkIdx) {
-        ChunkCursor cursor;
-        cursor.path = chunkFiles[chunkIdx];
-        cursor.handle = std::fopen(cursor.path.c_str(), "rb");
-        if (cursor.handle == NULL) {
-            Debug(Debug::ERROR) << "Could not open chunk file " << cursor.path << " for reading\n";
-            EXIT(EXIT_FAILURE);
-        }
-        if (readNext(cursor)) {
-            cursors.push_back(cursor);
-        } else {
-            std::fclose(cursor.handle);
-            std::remove(cursor.path.c_str());
-        }
-    }
-
-    unsigned int currentQueryChain = NOT_AVAILABLE_CHAIN_KEY;
-    std::vector<unsigned int> currentTargets;
-    EdgePair lastWrittenPair;
-    bool haveLastWrittenPair = false;
-    while (!cursors.empty()) {
-        size_t bestIdx = 0;
-        for (size_t idx = 1; idx < cursors.size(); ++idx) {
-            if (edgePairLess(cursors[idx].value, cursors[bestIdx].value)) {
-                bestIdx = idx;
+    std::vector<size_t> keptChainPairsByBucket(bucketCount, 0);
+#pragma omp parallel for schedule(dynamic, 1)
+    for (int bucketInt = 0; bucketInt < static_cast<int>(bucketCount); ++bucketInt) {
+        const unsigned int bucketId = static_cast<unsigned int>(bucketInt);
+        std::vector<ChunkCursor> cursors;
+        cursors.reserve(chunkFilesByBucket[bucketId].size());
+        for (size_t chunkIdx = 0; chunkIdx < chunkFilesByBucket[bucketId].size(); ++chunkIdx) {
+            ChunkCursor cursor;
+            cursor.path = chunkFilesByBucket[bucketId][chunkIdx];
+            cursor.handle = std::fopen(cursor.path.c_str(), "rb");
+            if (cursor.handle == NULL) {
+                Debug(Debug::ERROR) << "Could not open chunk file " << cursor.path << " for reading\n";
+                EXIT(EXIT_FAILURE);
+            }
+            if (readNext(cursor)) {
+                cursors.push_back(cursor);
+            } else {
+                std::fclose(cursor.handle);
+                std::remove(cursor.path.c_str());
             }
         }
-        const EdgePair pair = cursors[bestIdx].value;
-        if (haveLastWrittenPair == false ||
-            lastWrittenPair.queryChainKey != pair.queryChainKey ||
-            lastWrittenPair.targetChainKey != pair.targetChainKey) {
-            if (currentQueryChain != pair.queryChainKey) {
-                if (currentQueryChain != NOT_AVAILABLE_CHAIN_KEY) {
-                    std::string result;
-                    for (size_t targetIdx = 0; targetIdx < currentTargets.size(); ++targetIdx) {
-                        result.append(SSTR(currentTargets[targetIdx]));
-                        result.push_back('\n');
-                        keptChainPairs++;
-                    }
-                    resultWriter.writeData(result.c_str(), result.size(), currentQueryChain, 0);
-                    if (currentQueryChain < seenQueryChains.size()) {
-                        seenQueryChains[currentQueryChain] = 1;
-                    }
+
+        unsigned int currentQueryChain = NOT_AVAILABLE_CHAIN_KEY;
+        std::vector<unsigned int> currentTargets;
+        EdgePair lastWrittenPair;
+        bool haveLastWrittenPair = false;
+        while (!cursors.empty()) {
+            size_t bestIdx = 0;
+            for (size_t idx = 1; idx < cursors.size(); ++idx) {
+                if (edgePairLess(cursors[idx].value, cursors[bestIdx].value)) {
+                    bestIdx = idx;
                 }
-                currentQueryChain = pair.queryChainKey;
-                currentTargets.clear();
             }
-            currentTargets.push_back(pair.targetChainKey);
-            lastWrittenPair = pair;
-            haveLastWrittenPair = true;
+            const EdgePair pair = cursors[bestIdx].value;
+            if (haveLastWrittenPair == false ||
+                lastWrittenPair.queryChainKey != pair.queryChainKey ||
+                lastWrittenPair.targetChainKey != pair.targetChainKey) {
+                if (currentQueryChain != pair.queryChainKey) {
+                    if (currentQueryChain != NOT_AVAILABLE_CHAIN_KEY) {
+                        std::string result;
+                        for (size_t targetIdx = 0; targetIdx < currentTargets.size(); ++targetIdx) {
+                            result.append(SSTR(currentTargets[targetIdx]));
+                            result.push_back('\n');
+                            keptChainPairsByBucket[bucketId]++;
+                        }
+                        resultWriter.writeData(result.c_str(), result.size(), currentQueryChain, bucketId % static_cast<unsigned int>(par.threads));
+                        if (currentQueryChain < seenQueryChains.size()) {
+                            seenQueryChains[currentQueryChain] = 1;
+                        }
+                    }
+                    currentQueryChain = pair.queryChainKey;
+                    currentTargets.clear();
+                }
+                currentTargets.push_back(pair.targetChainKey);
+                lastWrittenPair = pair;
+                haveLastWrittenPair = true;
+            }
+
+            if (!readNext(cursors[bestIdx])) {
+                std::fclose(cursors[bestIdx].handle);
+                std::remove(cursors[bestIdx].path.c_str());
+                cursors[bestIdx] = cursors.back();
+                cursors.pop_back();
+            }
         }
 
-        if (!readNext(cursors[bestIdx])) {
-            std::fclose(cursors[bestIdx].handle);
-            std::remove(cursors[bestIdx].path.c_str());
-            cursors[bestIdx] = cursors.back();
-            cursors.pop_back();
+        if (currentQueryChain != NOT_AVAILABLE_CHAIN_KEY) {
+            std::string result;
+            for (size_t targetIdx = 0; targetIdx < currentTargets.size(); ++targetIdx) {
+                result.append(SSTR(currentTargets[targetIdx]));
+                result.push_back('\n');
+                keptChainPairsByBucket[bucketId]++;
+            }
+            resultWriter.writeData(result.c_str(), result.size(), currentQueryChain, bucketId % static_cast<unsigned int>(par.threads));
+            if (currentQueryChain < seenQueryChains.size()) {
+                seenQueryChains[currentQueryChain] = 1;
+            }
         }
     }
 
-    if (currentQueryChain != NOT_AVAILABLE_CHAIN_KEY) {
-        std::string result;
-        for (size_t targetIdx = 0; targetIdx < currentTargets.size(); ++targetIdx) {
-            result.append(SSTR(currentTargets[targetIdx]));
-            result.push_back('\n');
-            keptChainPairs++;
-        }
-        resultWriter.writeData(result.c_str(), result.size(), currentQueryChain, 0);
-        if (currentQueryChain < seenQueryChains.size()) {
-            seenQueryChains[currentQueryChain] = 1;
-        }
+    for (unsigned int bucketId = 0; bucketId < bucketCount; ++bucketId) {
+        keptChainPairs += keptChainPairsByBucket[bucketId];
     }
 
     for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
@@ -382,6 +412,7 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
     }
 
     resultWriter.close(false);
+    rmdir(tempDir.c_str());
     clusterDbr.close();
 
     const double reduction = (allPossibleChainPairs == 0)
