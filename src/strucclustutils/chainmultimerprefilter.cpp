@@ -8,6 +8,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
 #include <vector>
 
 #ifdef OPENMP
@@ -24,15 +27,13 @@ struct QueryToTargetChains {
     std::vector<unsigned int> targetChainKeys;
 };
 
-struct ComplexCandidate {
-    unsigned int targetComplexId;
-    std::vector<unsigned int> matchedQueryChains;
-    std::vector<unsigned int> matchedTargetChains;
-    std::vector<QueryToTargetChains> edges;
+struct EdgePair {
+    unsigned int queryChainKey;
+    unsigned int targetChainKey;
 };
 
 static void sortUnique(std::vector<unsigned int> &values) {
-    SORT_SERIAL(values.begin(), values.end());
+    std::sort(values.begin(), values.end());
     values.erase(std::unique(values.begin(), values.end()), values.end());
 }
 
@@ -100,17 +101,6 @@ static ChainGroup &findOrAddChainGroup(std::vector<ChainGroup> &groups, unsigned
     return groups.back();
 }
 
-static ComplexCandidate &findOrAddCandidate(std::vector<ComplexCandidate> &candidates, unsigned int targetComplexId) {
-    for (size_t i = 0; i < candidates.size(); ++i) {
-        if (candidates[i].targetComplexId == targetComplexId) {
-            return candidates[i];
-        }
-    }
-    candidates.push_back(ComplexCandidate());
-    candidates.back().targetComplexId = targetComplexId;
-    return candidates.back();
-}
-
 static QueryToTargetChains &findOrAddEdge(std::vector<QueryToTargetChains> &edges, unsigned int queryChainKey) {
     for (size_t i = 0; i < edges.size(); ++i) {
         if (edges[i].queryChainKey == queryChainKey) {
@@ -120,6 +110,51 @@ static QueryToTargetChains &findOrAddEdge(std::vector<QueryToTargetChains> &edge
     edges.push_back(QueryToTargetChains());
     edges.back().queryChainKey = queryChainKey;
     return edges.back();
+}
+
+static bool edgePairLess(const EdgePair &lhs, const EdgePair &rhs) {
+    if (lhs.queryChainKey != rhs.queryChainKey) {
+        return lhs.queryChainKey < rhs.queryChainKey;
+    }
+    return lhs.targetChainKey < rhs.targetChainKey;
+}
+
+static void flushChunk(std::vector<EdgePair> &buffer,
+                       const std::string &prefix,
+                       unsigned int threadIdx,
+                       unsigned int chunkId,
+                       std::vector<std::string> &chunkFiles) {
+    if (buffer.empty()) {
+        return;
+    }
+
+    std::sort(buffer.begin(), buffer.end(), edgePairLess);
+    const std::string path = prefix + "." + SSTR(threadIdx) + "." + SSTR(chunkId);
+    FILE *handle = std::fopen(path.c_str(), "wb");
+    if (handle == NULL) {
+        Debug(Debug::ERROR) << "Could not open chunk file " << path << " for writing\n";
+        EXIT(EXIT_FAILURE);
+    }
+    const size_t written = std::fwrite(&buffer[0], sizeof(EdgePair), buffer.size(), handle);
+    std::fclose(handle);
+    if (written != buffer.size()) {
+        Debug(Debug::ERROR) << "Could not fully write chunk file " << path << "\n";
+        EXIT(EXIT_FAILURE);
+    }
+    chunkFiles.push_back(path);
+    buffer.clear();
+}
+
+struct ChunkCursor {
+    FILE *handle;
+    EdgePair value;
+    bool hasValue;
+    std::string path;
+};
+
+static bool readNext(ChunkCursor &cursor) {
+    cursor.hasValue = (std::fread(&cursor.value, sizeof(EdgePair), 1, cursor.handle) == 1);
+    return cursor.hasValue;
 }
 
 int chainmultimerprefilter(int argc, const char **argv, const Command &command) {
@@ -147,47 +182,95 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
     loadComplexLookup(queryDbr, par.db1 + ".lookup", queryChainToComplex, queryComplexToChains, queryComplexIds);
     loadComplexLookup(targetDbr, par.db2 + ".lookup", targetChainToComplex, targetComplexToChains, targetComplexIds);
 
-    std::vector<std::vector<ComplexCandidate> > candidatesByQueryComplex(queryComplexToChains.size());
+    std::vector<char> queryComplexAllowed(queryComplexToChains.size(), 1);
+    for (size_t i = 0; i < queryComplexIds.size(); ++i) {
+        if (par.monomerIncludeMode == SKIP_MONOMERS &&
+            queryComplexToChains[queryComplexIds[i]].size() < MULTIPLE_CHAINED_COMPLEX) {
+            queryComplexAllowed[queryComplexIds[i]] = 0;
+        }
+    }
+    std::vector<char> targetComplexAllowed(targetComplexToChains.size(), 1);
+    for (size_t i = 0; i < targetComplexIds.size(); ++i) {
+        if (par.monomerIncludeMode == SKIP_MONOMERS &&
+            targetComplexToChains[targetComplexIds[i]].size() < MULTIPLE_CHAINED_COMPLEX) {
+            targetComplexAllowed[targetComplexIds[i]] = 0;
+        }
+    }
+
+    const std::string chunkPrefix = par.db4 + ".pairs";
+    const size_t maxBufferedPairs = 1000000;
+    std::vector<std::vector<std::string> > chunkFilesByThread(static_cast<size_t>(std::max(1, par.threads)));
+
     Debug::Progress progress(clusterDbr.getSize());
-    for (size_t entryId = 0; entryId < clusterDbr.getSize(); ++entryId) {
-        std::vector<unsigned int> clusterChainKeys;
-        std::vector<ChainGroup> queryGroups;
-        std::vector<ChainGroup> targetGroups;
+#pragma omp parallel
+    {
+        unsigned int threadIdx = 0;
+#ifdef OPENMP
+        threadIdx = static_cast<unsigned int>(omp_get_thread_num());
+#endif
+        std::vector<EdgePair> edgeBuffer;
+        edgeBuffer.reserve(maxBufferedPairs);
+        unsigned int chunkId = 0;
 
-        clusterChainKeys.push_back(clusterDbr.getDbKey(entryId));
-        char *data = clusterDbr.getData(entryId, 0);
-        while (*data != '\0') {
-            clusterChainKeys.push_back(Util::fast_atoi<unsigned int>(data));
-            data = Util::skipLine(data);
-        }
-        sortUnique(clusterChainKeys);
+#pragma omp for schedule(dynamic, 1)
+        for (size_t entryId = 0; entryId < clusterDbr.getSize(); ++entryId) {
+            std::vector<unsigned int> clusterChainKeys;
+            std::vector<ChainGroup> queryGroups;
+            std::vector<ChainGroup> targetGroups;
 
-        for (size_t idx = 0; idx < clusterChainKeys.size(); ++idx) {
-            const unsigned int chainKey = clusterChainKeys[idx];
-            if (chainKey < queryChainToComplex.size() && queryChainToComplex[chainKey] != NOT_AVAILABLE_CHAIN_KEY) {
-                findOrAddChainGroup(queryGroups, queryChainToComplex[chainKey]).chains.push_back(chainKey);
+            clusterChainKeys.push_back(clusterDbr.getDbKey(entryId));
+            char *data = clusterDbr.getData(entryId, threadIdx);
+            while (*data != '\0') {
+                clusterChainKeys.push_back(Util::fast_atoi<unsigned int>(data));
+                data = Util::skipLine(data);
             }
-            if (chainKey < targetChainToComplex.size() && targetChainToComplex[chainKey] != NOT_AVAILABLE_CHAIN_KEY) {
-                findOrAddChainGroup(targetGroups, targetChainToComplex[chainKey]).chains.push_back(chainKey);
-            }
-        }
+            sortUnique(clusterChainKeys);
 
-        for (size_t qIdx = 0; qIdx < queryGroups.size(); ++qIdx) {
-            for (size_t tIdx = 0; tIdx < targetGroups.size(); ++tIdx) {
-                ComplexCandidate &candidate = findOrAddCandidate(candidatesByQueryComplex[queryGroups[qIdx].complexId],
-                                                                 targetGroups[tIdx].complexId);
-                candidate.matchedQueryChains.insert(candidate.matchedQueryChains.end(),
-                                                    queryGroups[qIdx].chains.begin(), queryGroups[qIdx].chains.end());
-                candidate.matchedTargetChains.insert(candidate.matchedTargetChains.end(),
-                                                     targetGroups[tIdx].chains.begin(), targetGroups[tIdx].chains.end());
-                for (size_t chainIdx = 0; chainIdx < queryGroups[qIdx].chains.size(); ++chainIdx) {
-                    QueryToTargetChains &edge = findOrAddEdge(candidate.edges, queryGroups[qIdx].chains[chainIdx]);
-                    edge.targetChainKeys.insert(edge.targetChainKeys.end(),
-                                                targetGroups[tIdx].chains.begin(), targetGroups[tIdx].chains.end());
+            for (size_t idx = 0; idx < clusterChainKeys.size(); ++idx) {
+                const unsigned int chainKey = clusterChainKeys[idx];
+                if (chainKey < queryChainToComplex.size() && queryChainToComplex[chainKey] != NOT_AVAILABLE_CHAIN_KEY) {
+                    findOrAddChainGroup(queryGroups, queryChainToComplex[chainKey]).chains.push_back(chainKey);
+                }
+                if (chainKey < targetChainToComplex.size() && targetChainToComplex[chainKey] != NOT_AVAILABLE_CHAIN_KEY) {
+                    findOrAddChainGroup(targetGroups, targetChainToComplex[chainKey]).chains.push_back(chainKey);
                 }
             }
+
+            for (size_t qIdx = 0; qIdx < queryGroups.size(); ++qIdx) {
+                const unsigned int queryComplexId = queryGroups[qIdx].complexId;
+                if (queryComplexId >= queryComplexAllowed.size() || queryComplexAllowed[queryComplexId] == 0) {
+                    continue;
+                }
+                for (size_t tIdx = 0; tIdx < targetGroups.size(); ++tIdx) {
+                    const unsigned int targetComplexId = targetGroups[tIdx].complexId;
+                    if (targetComplexId >= targetComplexAllowed.size() || targetComplexAllowed[targetComplexId] == 0) {
+                        continue;
+                    }
+
+                    for (size_t qChainIdx = 0; qChainIdx < queryGroups[qIdx].chains.size(); ++qChainIdx) {
+                        const unsigned int queryChainKey = queryGroups[qIdx].chains[qChainIdx];
+                        for (size_t tChainIdx = 0; tChainIdx < targetGroups[tIdx].chains.size(); ++tChainIdx) {
+                            EdgePair pair;
+                            pair.queryChainKey = queryChainKey;
+                            pair.targetChainKey = targetGroups[tIdx].chains[tChainIdx];
+                            edgeBuffer.push_back(pair);
+                        }
+                    }
+                }
+            }
+
+            if (edgeBuffer.size() >= maxBufferedPairs) {
+                flushChunk(edgeBuffer, chunkPrefix, threadIdx, chunkId++, chunkFilesByThread[threadIdx]);
+            }
+            progress.updateProgress();
         }
-        progress.updateProgress();
+
+        flushChunk(edgeBuffer, chunkPrefix, threadIdx, chunkId++, chunkFilesByThread[threadIdx]);
+    }
+
+    std::vector<std::string> chunkFiles;
+    for (size_t threadIdx = 0; threadIdx < chunkFilesByThread.size(); ++threadIdx) {
+        chunkFiles.insert(chunkFiles.end(), chunkFilesByThread[threadIdx].begin(), chunkFilesByThread[threadIdx].end());
     }
 
     DBWriter resultWriter(par.db4.c_str(), par.db4Index.c_str(), static_cast<unsigned int>(par.threads),
@@ -203,58 +286,98 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
     }
 
     size_t keptChainPairs = 0;
-    Debug::Progress outputProgress(queryComplexIds.size());
-#pragma omp parallel reduction(+:keptChainPairs)
-    {
-        unsigned int thread_idx = 0;
-#ifdef OPENMP
-        thread_idx = static_cast<unsigned int>(omp_get_thread_num());
-#endif
-#pragma omp for schedule(dynamic, 1)
-        for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
-            const unsigned int queryComplexId = queryComplexIds[qIdx];
-            const std::vector<unsigned int> &queryChains = queryComplexToChains[queryComplexId];
-            if (par.monomerIncludeMode == SKIP_MONOMERS && queryChains.size() < MULTIPLE_CHAINED_COMPLEX) {
-                for (size_t chainIdx = 0; chainIdx < queryChains.size(); ++chainIdx) {
-                    resultWriter.writeData("", 0, queryChains[chainIdx], thread_idx);
-                }
-                outputProgress.updateProgress();
-                continue;
-            }
+    unsigned int maxQueryChainKey = 0;
+    for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
+        const std::vector<unsigned int> &queryChains = queryComplexToChains[queryComplexIds[qIdx]];
+        for (size_t chainIdx = 0; chainIdx < queryChains.size(); ++chainIdx) {
+            maxQueryChainKey = std::max(maxQueryChainKey, queryChains[chainIdx]);
+        }
+    }
+    std::vector<char> seenQueryChains(maxQueryChainKey + 1, 0);
 
-            std::vector<QueryToTargetChains> outputEdges;
-            std::vector<ComplexCandidate> &complexCandidates = candidatesByQueryComplex[queryComplexId];
-            for (size_t candIdx = 0; candIdx < complexCandidates.size(); ++candIdx) {
-                ComplexCandidate &candidate = complexCandidates[candIdx];
-                if (candidate.targetComplexId >= targetComplexToChains.size()) {
-                    continue;
-                }
-                const std::vector<unsigned int> &targetChains = targetComplexToChains[candidate.targetComplexId];
-                if (par.monomerIncludeMode == SKIP_MONOMERS && targetChains.size() < MULTIPLE_CHAINED_COMPLEX) {
-                    continue;
-                }
+    std::vector<ChunkCursor> cursors;
+    cursors.reserve(chunkFiles.size());
+    for (size_t chunkIdx = 0; chunkIdx < chunkFiles.size(); ++chunkIdx) {
+        ChunkCursor cursor;
+        cursor.path = chunkFiles[chunkIdx];
+        cursor.handle = std::fopen(cursor.path.c_str(), "rb");
+        if (cursor.handle == NULL) {
+            Debug(Debug::ERROR) << "Could not open chunk file " << cursor.path << " for reading\n";
+            EXIT(EXIT_FAILURE);
+        }
+        if (readNext(cursor)) {
+            cursors.push_back(cursor);
+        } else {
+            std::fclose(cursor.handle);
+            std::remove(cursor.path.c_str());
+        }
+    }
 
-                for (size_t edgeIdx = 0; edgeIdx < candidate.edges.size(); ++edgeIdx) {
-                    QueryToTargetChains &outEdge = findOrAddEdge(outputEdges, candidate.edges[edgeIdx].queryChainKey);
-                    outEdge.targetChainKeys.insert(outEdge.targetChainKeys.end(),
-                                                   candidate.edges[edgeIdx].targetChainKeys.begin(),
-                                                   candidate.edges[edgeIdx].targetChainKeys.end());
-                }
+    unsigned int currentQueryChain = NOT_AVAILABLE_CHAIN_KEY;
+    std::vector<unsigned int> currentTargets;
+    EdgePair lastWrittenPair;
+    bool haveLastWrittenPair = false;
+    while (!cursors.empty()) {
+        size_t bestIdx = 0;
+        for (size_t idx = 1; idx < cursors.size(); ++idx) {
+            if (edgePairLess(cursors[idx].value, cursors[bestIdx].value)) {
+                bestIdx = idx;
             }
+        }
+        const EdgePair pair = cursors[bestIdx].value;
+        if (haveLastWrittenPair == false ||
+            lastWrittenPair.queryChainKey != pair.queryChainKey ||
+            lastWrittenPair.targetChainKey != pair.targetChainKey) {
+            if (currentQueryChain != pair.queryChainKey) {
+                if (currentQueryChain != NOT_AVAILABLE_CHAIN_KEY) {
+                    std::string result;
+                    for (size_t targetIdx = 0; targetIdx < currentTargets.size(); ++targetIdx) {
+                        result.append(SSTR(currentTargets[targetIdx]));
+                        result.push_back('\n');
+                        keptChainPairs++;
+                    }
+                    resultWriter.writeData(result.c_str(), result.size(), currentQueryChain, 0);
+                    if (currentQueryChain < seenQueryChains.size()) {
+                        seenQueryChains[currentQueryChain] = 1;
+                    }
+                }
+                currentQueryChain = pair.queryChainKey;
+                currentTargets.clear();
+            }
+            currentTargets.push_back(pair.targetChainKey);
+            lastWrittenPair = pair;
+            haveLastWrittenPair = true;
+        }
 
-            for (size_t chainIdx = 0; chainIdx < queryChains.size(); ++chainIdx) {
-                const unsigned int queryChainKey = queryChains[chainIdx];
-                std::string result;
-                QueryToTargetChains &edge = findOrAddEdge(outputEdges, queryChainKey);
-                sortUnique(edge.targetChainKeys);
-                for (size_t targetIdx = 0; targetIdx < edge.targetChainKeys.size(); ++targetIdx) {
-                    result.append(SSTR(edge.targetChainKeys[targetIdx]));
-                    result.push_back('\n');
-                    keptChainPairs++;
-                }
-                resultWriter.writeData(result.c_str(), result.size(), queryChainKey, thread_idx);
+        if (!readNext(cursors[bestIdx])) {
+            std::fclose(cursors[bestIdx].handle);
+            std::remove(cursors[bestIdx].path.c_str());
+            cursors[bestIdx] = cursors.back();
+            cursors.pop_back();
+        }
+    }
+
+    if (currentQueryChain != NOT_AVAILABLE_CHAIN_KEY) {
+        std::string result;
+        for (size_t targetIdx = 0; targetIdx < currentTargets.size(); ++targetIdx) {
+            result.append(SSTR(currentTargets[targetIdx]));
+            result.push_back('\n');
+            keptChainPairs++;
+        }
+        resultWriter.writeData(result.c_str(), result.size(), currentQueryChain, 0);
+        if (currentQueryChain < seenQueryChains.size()) {
+            seenQueryChains[currentQueryChain] = 1;
+        }
+    }
+
+    for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
+        const unsigned int queryComplexId = queryComplexIds[qIdx];
+        const std::vector<unsigned int> &queryChains = queryComplexToChains[queryComplexId];
+        for (size_t chainIdx = 0; chainIdx < queryChains.size(); ++chainIdx) {
+            const unsigned int queryChainKey = queryChains[chainIdx];
+            if (queryChainKey >= seenQueryChains.size() || seenQueryChains[queryChainKey] == 0) {
+                resultWriter.writeData("", 0, queryChainKey, 0);
             }
-            outputProgress.updateProgress();
         }
     }
 
