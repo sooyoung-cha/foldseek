@@ -124,6 +124,9 @@ static void flushChunk(std::vector<EdgePair> &buffer,
     }
 
     std::sort(buffer.begin(), buffer.end(), edgePairLess);
+    buffer.erase(std::unique(buffer.begin(), buffer.end(), [](const EdgePair &lhs, const EdgePair &rhs) {
+        return lhs.queryChainKey == rhs.queryChainKey && lhs.targetChainKey == rhs.targetChainKey;
+    }), buffer.end());
     const std::string path = tempDir + "/bucket" + SSTR(bucketId) + ".thread" + SSTR(threadIdx) + ".chunk" + SSTR(chunkId);
     FILE *handle = std::fopen(path.c_str(), "wb");
     if (handle == NULL) {
@@ -197,7 +200,7 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
     const unsigned int bucketCount = static_cast<unsigned int>(std::max(1, par.threads));
     const std::string tempDir = par.db4 + ".tmp";
     ensureDirExists(tempDir);
-    const size_t maxBufferedPairs = 1000000;
+    const size_t maxBufferedPairs = 2000000;
     std::vector<std::vector<std::string> > chunkFilesByBucket(bucketCount);
 
     Debug(Debug::INFO) << "Pass 1/2: scanning chain clusters and spilling candidate pairs\n";
