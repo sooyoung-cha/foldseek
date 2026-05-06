@@ -204,22 +204,6 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
                           par.compressed, Parameters::DBTYPE_PREFILTER_RES);
     resultWriter.open();
 
-    size_t allPossibleChainPairs = 0;
-    for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
-        const unsigned int queryComplexId = queryComplexIds[qIdx];
-        if (queryComplexAllowed[queryComplexId] == 0) {
-            continue;
-        }
-        const size_t queryChainCount = queryComplexToChains[queryComplexId].size();
-        for (size_t tIdx = 0; tIdx < targetComplexIds.size(); ++tIdx) {
-            const unsigned int targetComplexId = targetComplexIds[tIdx];
-            if (targetComplexAllowed[targetComplexId] == 0) {
-                continue;
-            }
-            allPossibleChainPairs += queryChainCount * targetComplexToChains[targetComplexId].size();
-        }
-    }
-
     Debug(Debug::INFO) << "Pass 2/2: writing sorted prefilter DB\n";
     const unsigned int writerThreads = static_cast<unsigned int>(std::max(1, par.threads));
 #pragma omp parallel for schedule(static, 1)
@@ -255,10 +239,6 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
     resultWriter.close(false, false);
     Debug(Debug::INFO) << "Pass 2/2 finalize done\n";
 
-    const double reduction = (allPossibleChainPairs == 0)
-                                 ? 0.0
-                                 : 100.0 * (1.0 - static_cast<double>(keptChainPairs) / static_cast<double>(allPossibleChainPairs));
-    Debug(Debug::INFO) << "Candidate chain-pair reduction: " << reduction << "% (" << keptChainPairs
-                       << "/" << allPossibleChainPairs << " kept)\n";
+    Debug(Debug::INFO) << "Candidate chain pairs kept: " << keptChainPairs << "\n";
     return EXIT_SUCCESS;
 }
