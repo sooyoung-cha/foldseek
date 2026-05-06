@@ -126,20 +126,25 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
         }
     }
 
-    DBWriter resultWriter(par.db4.c_str(), par.db4Index.c_str(), static_cast<unsigned int>(par.threads),
-                          par.compressed, Parameters::DBTYPE_PREFILTER_RES);
-    resultWriter.open();
-
     unsigned int maxQueryChainKey = 0;
+    std::vector<char> queryChainExists;
     for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
         const std::vector<unsigned int> &queryChains = queryComplexToChains[queryComplexIds[qIdx]];
         for (size_t chainIdx = 0; chainIdx < queryChains.size(); ++chainIdx) {
             maxQueryChainKey = std::max(maxQueryChainKey, queryChains[chainIdx]);
         }
     }
-    std::vector<char> seenQueryChains(maxQueryChainKey + 1, 0);
+    queryChainExists.assign(maxQueryChainKey + 1, 0);
+    for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
+        const std::vector<unsigned int> &queryChains = queryComplexToChains[queryComplexIds[qIdx]];
+        for (size_t chainIdx = 0; chainIdx < queryChains.size(); ++chainIdx) {
+            queryChainExists[queryChains[chainIdx]] = 1;
+        }
+    }
+    std::vector<unsigned int> queryChainToCluster(maxQueryChainKey + 1, UINT_MAX);
+    std::vector<ClusterChains> cachedClusters(clusterDbr.getSize());
 
-    Debug(Debug::INFO) << "Pass 1/1: scanning chain clusters and writing prefilter DB\n";
+    Debug(Debug::INFO) << "Pass 1/2: scanning chain clusters and caching prefilter rows\n";
     Debug::Progress scanProgress(clusterDbr.getSize());
     size_t keptChainPairs = 0;
 #pragma omp parallel
@@ -153,7 +158,10 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
 #pragma omp for schedule(dynamic, 1)
         for (size_t entryId = 0; entryId < clusterDbr.getSize(); ++entryId) {
             std::vector<unsigned int> clusterChainKeys;
-            ClusterChains cluster;
+            ClusterChains &cluster = cachedClusters[entryId];
+            cluster.queryChains.clear();
+            cluster.targetChains.clear();
+            cluster.targetResult.clear();
 
             clusterChainKeys.push_back(clusterDbr.getDbKey(entryId));
             char *data = clusterDbr.getData(entryId, threadIdx);
@@ -187,10 +195,7 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
                 localKeptChainPairs += cluster.queryChains.size() * cluster.targetChains.size();
                 for (size_t queryIdx = 0; queryIdx < cluster.queryChains.size(); ++queryIdx) {
                     const unsigned int queryChainKey = cluster.queryChains[queryIdx];
-                    resultWriter.writeData(cluster.targetResult.c_str(), cluster.targetResult.size(), queryChainKey, threadIdx);
-                    if (queryChainKey < seenQueryChains.size()) {
-                        seenQueryChains[queryChainKey] = 1;
-                    }
+                    queryChainToCluster[queryChainKey] = static_cast<unsigned int>(entryId);
                 }
             }
             scanProgress.updateProgress();
@@ -199,6 +204,11 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
         keptChainPairs += localKeptChainPairs;
     }
     clusterDbr.close();
+    Debug(Debug::INFO) << "Pass 1/2 scan done, writing sorted output DB\n";
+
+    DBWriter resultWriter(par.db4.c_str(), par.db4Index.c_str(), static_cast<unsigned int>(par.threads),
+                          par.compressed, Parameters::DBTYPE_PREFILTER_RES);
+    resultWriter.open();
 
     size_t allPossibleChainPairs = 0;
     for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
@@ -216,18 +226,30 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
         }
     }
 
-    for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
-        const unsigned int queryComplexId = queryComplexIds[qIdx];
-        const std::vector<unsigned int> &queryChains = queryComplexToChains[queryComplexId];
-        for (size_t chainIdx = 0; chainIdx < queryChains.size(); ++chainIdx) {
-            const unsigned int queryChainKey = queryChains[chainIdx];
-            if (queryChainKey >= seenQueryChains.size() || seenQueryChains[queryChainKey] == 0) {
-                resultWriter.writeData("", 0, queryChainKey, 0);
+    Debug(Debug::INFO) << "Pass 2/2: writing sorted prefilter DB\n";
+    const unsigned int writerThreads = static_cast<unsigned int>(std::max(1, par.threads));
+#pragma omp parallel for schedule(static, 1)
+    for (int threadInt = 0; threadInt < static_cast<int>(writerThreads); ++threadInt) {
+        const unsigned int threadIdx = static_cast<unsigned int>(threadInt);
+        const unsigned int begin = (static_cast<unsigned long long>(maxQueryChainKey + 1) * threadIdx) / writerThreads;
+        const unsigned int end = (static_cast<unsigned long long>(maxQueryChainKey + 1) * (threadIdx + 1)) / writerThreads;
+        for (unsigned int queryChainKey = begin; queryChainKey < end; ++queryChainKey) {
+            if (queryChainExists[queryChainKey] == 0) {
+                continue;
+            }
+            const unsigned int clusterIdx = queryChainToCluster[queryChainKey];
+            if (clusterIdx == UINT_MAX) {
+                resultWriter.writeData("", 0, queryChainKey, threadIdx);
+            } else {
+                const std::string &targetResult = cachedClusters[clusterIdx].targetResult;
+                resultWriter.writeData(targetResult.c_str(), targetResult.size(), queryChainKey, threadIdx);
             }
         }
     }
 
-    resultWriter.close(false);
+    Debug(Debug::INFO) << "Pass 2/2 write done, finalizing output DB\n";
+    resultWriter.close(false, false);
+    Debug(Debug::INFO) << "Pass 2/2 finalize done\n";
 
     const double reduction = (allPossibleChainPairs == 0)
                                  ? 0.0
