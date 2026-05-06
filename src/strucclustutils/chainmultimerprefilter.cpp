@@ -145,7 +145,6 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
     std::vector<ClusterChains> cachedClusters(clusterDbr.getSize());
 
     Debug(Debug::INFO) << "Pass 1/2: scanning chain clusters and caching prefilter rows\n";
-    Debug::Progress scanProgress(clusterDbr.getSize());
     size_t keptChainPairs = 0;
 #pragma omp parallel
     {
@@ -154,6 +153,8 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
         threadIdx = static_cast<unsigned int>(omp_get_thread_num());
 #endif
         size_t localKeptChainPairs = 0;
+        std::vector<std::pair<unsigned int, unsigned int> > localQueryToCluster;
+        localQueryToCluster.reserve(1024);
 
 #pragma omp for schedule(dynamic, 1)
         for (size_t entryId = 0; entryId < clusterDbr.getSize(); ++entryId) {
@@ -191,10 +192,15 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
                 localKeptChainPairs += cluster.queryChains.size() * cluster.targetChains.size();
                 for (size_t queryIdx = 0; queryIdx < cluster.queryChains.size(); ++queryIdx) {
                     const unsigned int queryChainKey = cluster.queryChains[queryIdx];
-                    queryChainToCluster[queryChainKey] = static_cast<unsigned int>(entryId);
+                    localQueryToCluster.push_back(std::make_pair(queryChainKey, static_cast<unsigned int>(entryId)));
                 }
             }
-            scanProgress.updateProgress();
+        }
+#pragma omp critical
+        {
+            for (size_t i = 0; i < localQueryToCluster.size(); ++i) {
+                queryChainToCluster[localQueryToCluster[i].first] = localQueryToCluster[i].second;
+            }
         }
 #pragma omp atomic
         keptChainPairs += localKeptChainPairs;
