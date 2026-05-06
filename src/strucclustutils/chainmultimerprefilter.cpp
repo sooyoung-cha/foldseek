@@ -188,10 +188,6 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
             }
 
             if (!cluster.queryChains.empty() && !cluster.targetChains.empty()) {
-                cluster.targetResult.reserve(cluster.targetChains.size() * 12);
-                for (size_t targetIdx = 0; targetIdx < cluster.targetChains.size(); ++targetIdx) {
-                    appendChainResult(cluster.targetResult, cluster.targetChains[targetIdx]);
-                }
                 localKeptChainPairs += cluster.queryChains.size() * cluster.targetChains.size();
                 for (size_t queryIdx = 0; queryIdx < cluster.queryChains.size(); ++queryIdx) {
                     const unsigned int queryChainKey = cluster.queryChains[queryIdx];
@@ -233,6 +229,8 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
         const unsigned int threadIdx = static_cast<unsigned int>(threadInt);
         const unsigned int begin = (static_cast<unsigned long long>(maxQueryChainKey + 1) * threadIdx) / writerThreads;
         const unsigned int end = (static_cast<unsigned long long>(maxQueryChainKey + 1) * (threadIdx + 1)) / writerThreads;
+        unsigned int lastClusterIdx = UINT_MAX;
+        std::string targetResult;
         for (unsigned int queryChainKey = begin; queryChainKey < end; ++queryChainKey) {
             if (queryChainExists[queryChainKey] == 0) {
                 continue;
@@ -241,7 +239,15 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
             if (clusterIdx == UINT_MAX) {
                 resultWriter.writeData("", 0, queryChainKey, threadIdx);
             } else {
-                const std::string &targetResult = cachedClusters[clusterIdx].targetResult;
+                if (clusterIdx != lastClusterIdx) {
+                    const std::vector<unsigned int> &targetChains = cachedClusters[clusterIdx].targetChains;
+                    targetResult.clear();
+                    targetResult.reserve(targetChains.size() * 12);
+                    for (size_t targetIdx = 0; targetIdx < targetChains.size(); ++targetIdx) {
+                        appendChainResult(targetResult, targetChains[targetIdx]);
+                    }
+                    lastClusterIdx = clusterIdx;
+                }
                 resultWriter.writeData(targetResult.c_str(), targetResult.size(), queryChainKey, threadIdx);
             }
         }
