@@ -74,6 +74,7 @@ int multimercluster_fast(int argc, const char **argv, const Command &command) {
     std::string chainTmThreshold = SSTR(chainClusterThreshold);
     std::string chainCoverageThreshold = SSTR(par.covThr);
     std::string chainCoverageMode = SSTR(par.covMode);
+    const std::string structureAlignTmThreshold = SSTR(par.filtChainTmThr);
 
     if (useOriginalMultimerCluster) {
         Debug(Debug::INFO) << "chain-tm-threshold " << par.filtChainTmThr
@@ -102,6 +103,8 @@ int multimercluster_fast(int argc, const char **argv, const Command &command) {
     chainClusterPar = stripOptionAndValue(chainClusterPar, "-c");
     chainClusterPar = stripOptionAndValue(chainClusterPar, "--cov-mode");
     chainClusterPar = stripOptionAndValue(chainClusterPar, "--remove-tmp-files");
+    std::string structureAlignPar = par.createParameterString(par.structurealign);
+    structureAlignPar = stripOptionAndValue(structureAlignPar, "--tmscore-threshold");
     const std::string multimerClusterPar = par.createParameterString(par.multimerclusterworkflow, true);
     cmd.addVariable("USE_ORIGINAL_MULTIMERCLUSTER", useOriginalMultimerCluster ? "TRUE" : NULL);
     cmd.addVariable("MULTIMERCLUSTER_PAR", multimerClusterPar.c_str());
@@ -110,7 +113,9 @@ int multimercluster_fast(int argc, const char **argv, const Command &command) {
     cmd.addVariable("CHAIN_CLUSTER_C", chainCoverageThreshold.c_str());
     cmd.addVariable("CHAIN_CLUSTER_COV_MODE", chainCoverageMode.c_str());
     cmd.addVariable("CHAINMULTIMERPREFILTER_PAR", par.createParameterString(par.chainmultimerprefilter).c_str());
-    cmd.addVariable("STRUCTUREALIGN_PAR", par.createParameterString(par.structurealign).c_str());
+    structureAlignPar.append(" --tmscore-threshold ");
+    structureAlignPar.append(structureAlignTmThreshold);
+    cmd.addVariable("STRUCTUREALIGN_PAR", structureAlignPar.c_str());
     cmd.addVariable("SCOREMULTIMER_PAR", par.createParameterString(par.scoremultimer).c_str());
     cmd.addVariable("CLUSTER_PAR", par.createParameterString(par.clust).c_str());
     cmd.addVariable("REMOVE_TMP", par.removeTmpFiles ? "TRUE" : NULL);

@@ -105,12 +105,16 @@ int multimercluster(int argc, const char **argv, const Command &command) {
         chainClusterPar = stripOptionAndValue(chainClusterPar, "-c");
         chainClusterPar = stripOptionAndValue(chainClusterPar, "--cov-mode");
         chainClusterPar = stripOptionAndValue(chainClusterPar, "--remove-tmp-files");
+        std::string structureAlignPar = par.createParameterString(par.structurealign);
+        structureAlignPar = stripOptionAndValue(structureAlignPar, "--tmscore-threshold");
+        structureAlignPar.append(" --tmscore-threshold ");
+        structureAlignPar.append(SSTR(par.filtChainTmThr));
         cmd.addVariable("CHAINCLUSTER_PAR", chainClusterPar.c_str());
         cmd.addVariable("CHAIN_TM_THRESHOLD", chainClusterThresholdString.c_str());
         cmd.addVariable("CHAIN_CLUSTER_C", chainCoverageThresholdString.c_str());
         cmd.addVariable("CHAIN_CLUSTER_COV_MODE", chainCoverageModeString.c_str());
         cmd.addVariable("CHAINMULTIMERPREFILTER_PAR", par.createParameterString(par.chainmultimerprefilter).c_str());
-        cmd.addVariable("STRUCTUREALIGN_PAR", par.createParameterString(par.structurealign).c_str());
+        cmd.addVariable("STRUCTUREALIGN_PAR", structureAlignPar.c_str());
         cmd.addVariable("SCOREMULTIMER_PAR", par.createParameterString(par.scoremultimer).c_str());
         cmd.addVariable("CLUSTER_PAR", par.createParameterString(par.clust).c_str());
         cmd.addVariable("REMOVE_TMP", par.removeTmpFiles ? "TRUE" : NULL);
