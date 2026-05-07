@@ -1,4 +1,5 @@
 #include <cassert>
+#include <algorithm>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -32,6 +33,17 @@ static std::string stripOptionAndValue(const std::string &params, const std::str
     return result;
 }
 
+static bool shouldUseOriginalMultimerCluster(const float chainTmThreshold) {
+    return chainTmThreshold < 0.5f;
+}
+
+static float mapChainClusterThreshold(const float chainTmThreshold) {
+    if (chainTmThreshold < 0.7f) {
+        return std::min(1.0f, chainTmThreshold + 0.1f);
+    }
+    return std::min(1.0f, chainTmThreshold + 0.05f);
+}
+
 void setMultimerClusterFastDefaults(LocalParameters *p) {
     p->filtMultTmThr = 0.65;
     p->filtChainTmThr = 0.001;
@@ -57,9 +69,19 @@ int multimercluster_fast(int argc, const char **argv, const Command &command) {
     par.addBacktrace = true;
     par.PARAM_ADD_BACKTRACE.wasSet = true;
     par.clusteringSetMode = 1;
-    std::string chainTmThreshold = SSTR(par.filtChainTmThr);
+    const bool useOriginalMultimerCluster = shouldUseOriginalMultimerCluster(par.filtChainTmThr);
+    const float chainClusterThreshold = mapChainClusterThreshold(par.filtChainTmThr);
+    std::string chainTmThreshold = SSTR(chainClusterThreshold);
     std::string chainCoverageThreshold = SSTR(par.covThr);
     std::string chainCoverageMode = SSTR(par.covMode);
+
+    if (useOriginalMultimerCluster) {
+        Debug(Debug::INFO) << "chain-tm-threshold " << par.filtChainTmThr
+                           << " is below 0.5, falling back to multimercluster\n";
+    } else {
+        Debug(Debug::INFO) << "Using multimercluster_fast with internal chain cluster TM threshold "
+                           << chainClusterThreshold << " (user chain-tm-threshold " << par.filtChainTmThr << ")\n";
+    }
 
     std::string tmpDir = par.filenames.back();
     std::string hash = SSTR(par.hashParameter(command.databases, par.filenames, *command.params));
@@ -80,6 +102,9 @@ int multimercluster_fast(int argc, const char **argv, const Command &command) {
     chainClusterPar = stripOptionAndValue(chainClusterPar, "-c");
     chainClusterPar = stripOptionAndValue(chainClusterPar, "--cov-mode");
     chainClusterPar = stripOptionAndValue(chainClusterPar, "--remove-tmp-files");
+    const std::string multimerClusterPar = par.createParameterString(par.multimerclusterworkflow, true);
+    cmd.addVariable("USE_ORIGINAL_MULTIMERCLUSTER", useOriginalMultimerCluster ? "TRUE" : NULL);
+    cmd.addVariable("MULTIMERCLUSTER_PAR", multimerClusterPar.c_str());
     cmd.addVariable("CHAINCLUSTER_PAR", chainClusterPar.c_str());
     cmd.addVariable("CHAIN_TM_THRESHOLD", chainTmThreshold.c_str());
     cmd.addVariable("CHAIN_CLUSTER_C", chainCoverageThreshold.c_str());

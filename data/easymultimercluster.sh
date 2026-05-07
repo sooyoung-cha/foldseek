@@ -105,8 +105,8 @@ fi
 
 if notExists "${TMP_PATH}/multimer_clu.dbtype"; then
     # shellcheck disable=SC2086
-    "$MMSEQS" multimercluster "${QUERY}" "${TMP_PATH}/multimer_clu" "${TMP_PATH}/multimercluster_tmp" ${MULTIMERCLUSTER_PAR} \
-        || fail "Multimercluster died"
+    "$MMSEQS" "${MULTIMERCLUSTER_MODULE}" "${QUERY}" "${TMP_PATH}/multimer_clu" "${TMP_PATH}/multimercluster_tmp" ${MULTIMERCLUSTER_PAR} \
+        || fail "${MULTIMERCLUSTER_MODULE} died"
 fi
 
 if notExists "${TMP_PATH}/cluster.tsv"; then

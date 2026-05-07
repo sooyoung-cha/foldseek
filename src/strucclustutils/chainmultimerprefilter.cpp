@@ -18,7 +18,6 @@
 struct ClusterChains {
     std::vector<unsigned int> queryChains;
     std::vector<unsigned int> targetChains;
-    std::string targetResult;
 };
 
 static void sortUnique(std::vector<unsigned int> &values) {
@@ -160,7 +159,6 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
             ClusterChains &cluster = cachedClusters[entryId];
             cluster.queryChains.clear();
             cluster.targetChains.clear();
-            cluster.targetResult.clear();
 
             clusterChainKeys.push_back(clusterDbr.getDbKey(entryId));
             char *data = clusterDbr.getData(entryId, threadIdx);
