@@ -37,13 +37,6 @@ static bool shouldUseOriginalMultimerCluster(const float chainTmThreshold) {
     return chainTmThreshold < 0.5f;
 }
 
-static float mapChainClusterThreshold(const float chainTmThreshold) {
-    if (chainTmThreshold < 0.7f) {
-        return std::min(1.0f, chainTmThreshold + 0.1f);
-    }
-    return std::min(1.0f, chainTmThreshold + 0.05f);
-}
-
 void setMultimerClusterFastDefaults(LocalParameters *p) {
     p->filtMultTmThr = 0.65;
     p->filtChainTmThr = 0.001;
@@ -70,8 +63,7 @@ int multimercluster_fast(int argc, const char **argv, const Command &command) {
     par.PARAM_ADD_BACKTRACE.wasSet = true;
     par.clusteringSetMode = 1;
     const bool useOriginalMultimerCluster = shouldUseOriginalMultimerCluster(par.filtChainTmThr);
-    const float chainClusterThreshold = mapChainClusterThreshold(par.filtChainTmThr);
-    std::string chainTmThreshold = SSTR(chainClusterThreshold);
+    std::string chainTmThreshold = SSTR(par.filtChainTmThr);
     std::string chainCoverageThreshold = SSTR(par.covThr);
     std::string chainCoverageMode = SSTR(par.covMode);
     const std::string structureAlignTmThreshold = SSTR(par.filtChainTmThr);
@@ -80,8 +72,8 @@ int multimercluster_fast(int argc, const char **argv, const Command &command) {
         Debug(Debug::INFO) << "chain-tm-threshold " << par.filtChainTmThr
                            << " is below 0.5, falling back to multimercluster\n";
     } else {
-        Debug(Debug::INFO) << "Using multimercluster_fast with internal chain cluster TM threshold "
-                           << chainClusterThreshold << " (user chain-tm-threshold " << par.filtChainTmThr << ")\n";
+        Debug(Debug::INFO) << "Using multimercluster_fast with chain TM threshold "
+                           << par.filtChainTmThr << " for both chain clustering and structure alignment\n";
     }
 
     std::string tmpDir = par.filenames.back();

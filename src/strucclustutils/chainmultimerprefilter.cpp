@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@
 struct ClusterChains {
     std::vector<unsigned int> queryChains;
     std::vector<unsigned int> targetChains;
+    std::vector<unsigned int> targetComplexIds;
 };
 
 static void sortUnique(std::vector<unsigned int> &values) {
@@ -159,6 +161,7 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
             ClusterChains &cluster = cachedClusters[entryId];
             cluster.queryChains.clear();
             cluster.targetChains.clear();
+            cluster.targetComplexIds.clear();
 
             clusterChainKeys.push_back(clusterDbr.getDbKey(entryId));
             char *data = clusterDbr.getData(entryId, threadIdx);
@@ -185,6 +188,13 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
             }
 
             if (!cluster.queryChains.empty() && !cluster.targetChains.empty()) {
+                for (size_t targetIdx = 0; targetIdx < cluster.targetChains.size(); ++targetIdx) {
+                    const unsigned int targetChainKey = cluster.targetChains[targetIdx];
+                    if (targetChainKey < targetChainToComplex.size()) {
+                        cluster.targetComplexIds.push_back(targetChainToComplex[targetChainKey]);
+                    }
+                }
+                sortUnique(cluster.targetComplexIds);
                 localKeptChainPairs += cluster.queryChains.size() * cluster.targetChains.size();
                 for (size_t queryIdx = 0; queryIdx < cluster.queryChains.size(); ++queryIdx) {
                     const unsigned int queryChainKey = cluster.queryChains[queryIdx];
@@ -196,37 +206,90 @@ int chainmultimerprefilter(int argc, const char **argv, const Command &command) 
         keptChainPairs += localKeptChainPairs;
     }
     clusterDbr.close();
-    Debug(Debug::INFO) << "Pass 1/2 scan done, writing sorted output DB\n";
+    Debug(Debug::INFO) << "Pass 1/2 scan done, writing complex-consistent prefilter DB\n";
 
     DBWriter resultWriter(par.db4.c_str(), par.db4Index.c_str(), static_cast<unsigned int>(par.threads),
                           par.compressed, Parameters::DBTYPE_PREFILTER_RES);
     resultWriter.open();
 
-    Debug(Debug::INFO) << "Pass 2/2: writing sorted prefilter DB\n";
-    const unsigned int writerThreads = static_cast<unsigned int>(std::max(1, par.threads));
-#pragma omp parallel for schedule(static, 1)
-    for (int threadInt = 0; threadInt < static_cast<int>(writerThreads); ++threadInt) {
-        const unsigned int threadIdx = static_cast<unsigned int>(threadInt);
-        const unsigned int begin = (static_cast<unsigned long long>(maxQueryChainKey + 1) * threadIdx) / writerThreads;
-        const unsigned int end = (static_cast<unsigned long long>(maxQueryChainKey + 1) * (threadIdx + 1)) / writerThreads;
-        unsigned int lastClusterIdx = UINT_MAX;
+    Debug(Debug::INFO) << "Pass 2/2: writing complex-consistent prefilter DB\n";
+#pragma omp parallel
+    {
+        unsigned int threadIdx = 0;
+#ifdef OPENMP
+        threadIdx = static_cast<unsigned int>(omp_get_thread_num());
+#endif
+        std::vector<unsigned int> queryClusterIdxs;
+        std::vector<unsigned int> seedTargetComplexIds;
+        std::vector<unsigned int> acceptedTargetComplexIds;
         std::string targetResult;
-        for (unsigned int queryChainKey = begin; queryChainKey < end; ++queryChainKey) {
-            if (queryChainExists[queryChainKey] == 0) {
-                continue;
-            }
-            const unsigned int clusterIdx = queryChainToCluster[queryChainKey];
-            if (clusterIdx == UINT_MAX) {
-                resultWriter.writeData("", 0, queryChainKey, threadIdx);
-            } else {
-                if (clusterIdx != lastClusterIdx) {
-                    const std::vector<unsigned int> &targetChains = cachedClusters[clusterIdx].targetChains;
-                    targetResult.clear();
-                    targetResult.reserve(targetChains.size() * 12);
-                    for (size_t targetIdx = 0; targetIdx < targetChains.size(); ++targetIdx) {
-                        appendChainResult(targetResult, targetChains[targetIdx]);
+
+#pragma omp for schedule(dynamic, 1)
+        for (size_t qIdx = 0; qIdx < queryComplexIds.size(); ++qIdx) {
+            const unsigned int queryComplexId = queryComplexIds[qIdx];
+            const std::vector<unsigned int> &queryChains = queryComplexToChains[queryComplexId];
+            queryClusterIdxs.clear();
+            seedTargetComplexIds.clear();
+            acceptedTargetComplexIds.clear();
+
+            if (queryComplexAllowed[queryComplexId] != 0) {
+                bool allChainsHaveTargets = true;
+                unsigned int seedClusterIdx = UINT_MAX;
+                size_t minSeedComplexCount = SIZE_MAX;
+                for (size_t chainIdx = 0; chainIdx < queryChains.size(); ++chainIdx) {
+                    const unsigned int queryChainKey = queryChains[chainIdx];
+                    const unsigned int clusterIdx = queryChainKey < queryChainToCluster.size()
+                                                       ? queryChainToCluster[queryChainKey]
+                                                       : UINT_MAX;
+                    queryClusterIdxs.push_back(clusterIdx);
+                    if (clusterIdx == UINT_MAX || cachedClusters[clusterIdx].targetComplexIds.empty()) {
+                        allChainsHaveTargets = false;
+                        break;
                     }
-                    lastClusterIdx = clusterIdx;
+                    const size_t complexCount = cachedClusters[clusterIdx].targetComplexIds.size();
+                    if (complexCount < minSeedComplexCount) {
+                        minSeedComplexCount = complexCount;
+                        seedClusterIdx = clusterIdx;
+                    }
+                }
+
+                if (allChainsHaveTargets && seedClusterIdx != UINT_MAX) {
+                    seedTargetComplexIds = cachedClusters[seedClusterIdx].targetComplexIds;
+                    for (size_t targetComplexIdx = 0; targetComplexIdx < seedTargetComplexIds.size(); ++targetComplexIdx) {
+                        const unsigned int targetComplexId = seedTargetComplexIds[targetComplexIdx];
+                        bool presentInAllQueryClusters = true;
+                        for (size_t clusterVecIdx = 0; clusterVecIdx < queryClusterIdxs.size(); ++clusterVecIdx) {
+                            const std::vector<unsigned int> &targetComplexIds =
+                                cachedClusters[queryClusterIdxs[clusterVecIdx]].targetComplexIds;
+                            if (!std::binary_search(targetComplexIds.begin(), targetComplexIds.end(), targetComplexId)) {
+                                presentInAllQueryClusters = false;
+                                break;
+                            }
+                        }
+                        if (presentInAllQueryClusters) {
+                            acceptedTargetComplexIds.push_back(targetComplexId);
+                        }
+                    }
+                }
+            }
+
+            for (size_t chainIdx = 0; chainIdx < queryChains.size(); ++chainIdx) {
+                const unsigned int queryChainKey = queryChains[chainIdx];
+                targetResult.clear();
+                if (chainIdx < queryClusterIdxs.size()
+                    && queryClusterIdxs[chainIdx] != UINT_MAX
+                    && !acceptedTargetComplexIds.empty()) {
+                    const std::vector<unsigned int> &targetChains =
+                        cachedClusters[queryClusterIdxs[chainIdx]].targetChains;
+                    for (size_t targetIdx = 0; targetIdx < targetChains.size(); ++targetIdx) {
+                        const unsigned int targetChainKey = targetChains[targetIdx];
+                        if (targetChainKey < targetChainToComplex.size()
+                            && std::binary_search(acceptedTargetComplexIds.begin(),
+                                                  acceptedTargetComplexIds.end(),
+                                                  targetChainToComplex[targetChainKey])) {
+                            appendChainResult(targetResult, targetChainKey);
+                        }
+                    }
                 }
                 resultWriter.writeData(targetResult.c_str(), targetResult.size(), queryChainKey, threadIdx);
             }

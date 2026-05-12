@@ -51,13 +51,6 @@ static bool shouldUseFastMultimerCluster(const float chainTmThreshold) {
     return chainTmThreshold >= 0.5f;
 }
 
-static float mapChainClusterThreshold(const float chainTmThreshold) {
-    if (chainTmThreshold < 0.7f) {
-        return std::min(1.0f, chainTmThreshold + 0.1f);
-    }
-    return std::min(1.0f, chainTmThreshold + 0.05f);
-}
-
 int multimercluster(int argc, const char **argv, const Command &command) {
     LocalParameters &par = LocalParameters::getLocalInstance();
     par.PARAM_ADD_BACKTRACE.addCategory(MMseqsParameter::COMMAND_EXPERT); //align
@@ -97,8 +90,7 @@ int multimercluster(int argc, const char **argv, const Command &command) {
     if (useFastMultimerCluster) {
         Debug(Debug::INFO) << "chain-tm-threshold " << par.filtChainTmThr
                            << " is at least 0.5, routing multimercluster to multimercluster_fast\n";
-        const float chainClusterThreshold = mapChainClusterThreshold(par.filtChainTmThr);
-        const std::string chainClusterThresholdString = SSTR(chainClusterThreshold);
+        const std::string chainClusterThresholdString = SSTR(par.filtChainTmThr);
         const std::string chainCoverageThresholdString = SSTR(par.covThr);
         const std::string chainCoverageModeString = SSTR(par.covMode);
         std::string chainClusterPar = par.createParameterString(par.structureclusterworkflow, true);
