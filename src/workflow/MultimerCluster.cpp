@@ -10,9 +10,6 @@
 #include "LocalParameters.h"
 #include "Debug.h"
 #include "multimercluster.sh.h"
-#define multimercluster_fast_sh_len multimercluster_fast_sh_len_dispatch
-#include "multimercluster_fast.sh.h"
-#undef multimercluster_fast_sh_len
 
 static std::string stripOptionAndValue(const std::string &params, const std::string &option) {
     std::istringstream input(params);
@@ -47,10 +44,6 @@ void mustsetMultimerCluster(LocalParameters *p) {
     p->clusteringSetMode = 1;
 }
 
-static bool shouldUseFastMultimerCluster(const float chainTmThreshold) {
-    return chainTmThreshold >= 0.5f;
-}
-
 int multimercluster(int argc, const char **argv, const Command &command) {
     LocalParameters &par = LocalParameters::getLocalInstance();
     par.PARAM_ADD_BACKTRACE.addCategory(MMseqsParameter::COMMAND_EXPERT); //align
@@ -68,8 +61,6 @@ int multimercluster(int argc, const char **argv, const Command &command) {
     setMultimerClusterDefaults(&par);
     par.parseParameters(argc, argv, command, true, Parameters::PARSE_VARIADIC, 0);
     mustsetMultimerCluster(&par);
-    const bool useFastMultimerCluster = shouldUseFastMultimerCluster(par.filtChainTmThr);
-
     std::string tmpDir = par.filenames.back();
     std::string hash = SSTR(par.hashParameter(command.databases, par.filenames, *command.params));
     if (par.reuseLatest) {
@@ -86,41 +77,13 @@ int multimercluster(int argc, const char **argv, const Command &command) {
     cmd.addVariable("INPUT", par.filenames.back().c_str());
     par.filenames.pop_back();
 
-    std::string program;
-    if (useFastMultimerCluster) {
-        Debug(Debug::INFO) << "chain-tm-threshold " << par.filtChainTmThr
-                           << " is at least 0.5, routing multimercluster to multimercluster_fast\n";
-        const std::string chainClusterThresholdString = SSTR(par.filtChainTmThr);
-        const std::string chainCoverageThresholdString = SSTR(par.covThr);
-        const std::string chainCoverageModeString = SSTR(par.covMode);
-        std::string chainClusterPar = par.createParameterString(par.structureclusterworkflow, true);
-        chainClusterPar = stripOptionAndValue(chainClusterPar, "-c");
-        chainClusterPar = stripOptionAndValue(chainClusterPar, "--cov-mode");
-        chainClusterPar = stripOptionAndValue(chainClusterPar, "--remove-tmp-files");
-        std::string structureAlignPar = par.createParameterString(par.structurealign);
-        structureAlignPar = stripOptionAndValue(structureAlignPar, "--tmscore-threshold");
-        structureAlignPar.append(" --tmscore-threshold ");
-        structureAlignPar.append(SSTR(par.filtChainTmThr));
-        cmd.addVariable("CHAINCLUSTER_PAR", chainClusterPar.c_str());
-        cmd.addVariable("CHAIN_TM_THRESHOLD", chainClusterThresholdString.c_str());
-        cmd.addVariable("CHAIN_CLUSTER_C", chainCoverageThresholdString.c_str());
-        cmd.addVariable("CHAIN_CLUSTER_COV_MODE", chainCoverageModeString.c_str());
-        cmd.addVariable("CHAINMULTIMERPREFILTER_PAR", par.createParameterString(par.chainmultimerprefilter).c_str());
-        cmd.addVariable("STRUCTUREALIGN_PAR", structureAlignPar.c_str());
-        cmd.addVariable("SCOREMULTIMER_PAR", par.createParameterString(par.scoremultimer).c_str());
-        cmd.addVariable("CLUSTER_PAR", par.createParameterString(par.clust).c_str());
-        cmd.addVariable("REMOVE_TMP", par.removeTmpFiles ? "TRUE" : NULL);
-        cmd.addVariable("VERBOSITY_PAR", par.createParameterString(par.onlyverbosity).c_str());
-        program = tmpDir + "/multimercluster_fast.sh";
-        FileUtil::writeFile(program, multimercluster_fast_sh, multimercluster_fast_sh_len_dispatch);
-    } else {
-        cmd.addVariable("MULTIMERSEARCH_PAR", par.createParameterString(par.multimersearchworkflow, true).c_str());
-        cmd.addVariable("CLUSTER_PAR", par.createParameterString(par.clust).c_str());
-        cmd.addVariable("REMOVE_TMP", par.removeTmpFiles ? "TRUE" : NULL);
-        cmd.addVariable("VERBOSITY_PAR", par.createParameterString(par.onlyverbosity).c_str());
-        program = tmpDir + "/multimercluster.sh";
-        FileUtil::writeFile(program, multimercluster_sh, multimercluster_sh_len);
-    }
+    Debug(Debug::INFO) << "Using original multimercluster workflow\n";
+    cmd.addVariable("MULTIMERSEARCH_PAR", par.createParameterString(par.multimersearchworkflow, true).c_str());
+    cmd.addVariable("CLUSTER_PAR", par.createParameterString(par.clust).c_str());
+    cmd.addVariable("REMOVE_TMP", par.removeTmpFiles ? "TRUE" : NULL);
+    cmd.addVariable("VERBOSITY_PAR", par.createParameterString(par.onlyverbosity).c_str());
+    std::string program = tmpDir + "/multimercluster.sh";
+    FileUtil::writeFile(program, multimercluster_sh, multimercluster_sh_len);
     cmd.execProgram(program.c_str(), par.filenames);
 
     // Should never get here

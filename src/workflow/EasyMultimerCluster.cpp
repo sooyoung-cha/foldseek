@@ -20,10 +20,6 @@ void setEasyMultimerClusterMustPassAlong(Parameters *p) {
     p->PARAM_WRITE_LOOKUP.wasSet = true;
 }
 
-static bool shouldUseFastMultimerCluster(const float chainTmThreshold) {
-    return chainTmThreshold >= 0.5f;
-}
-
 int easymultimercluster(int argc, const char **argv, const Command &command) {
     LocalParameters &par = LocalParameters::getLocalInstance();
     //TODO
@@ -44,8 +40,6 @@ int easymultimercluster(int argc, const char **argv, const Command &command) {
     setEasyMultimerClusterDefaults(&par);
     par.parseParameters(argc, argv, command, true, Parameters::PARSE_VARIADIC, 0);
     setEasyMultimerClusterMustPassAlong(&par);
-    const bool useFastMultimerCluster = shouldUseFastMultimerCluster(par.filtChainTmThr);
-
     std::string tmpDir = par.filenames.back();
     std::string hash = SSTR(par.hashParameter(command.databases, par.filenames, *command.params));
     if (par.reuseLatest) {
@@ -66,15 +60,9 @@ int easymultimercluster(int argc, const char **argv, const Command &command) {
     cmd.addVariable("GPU", par.gpu ? "TRUE" : NULL);
     cmd.addVariable("MAKEPADDEDSEQDB_PAR", par.createParameterString(par.makepaddeddb).c_str());
     cmd.addVariable("CREATEDB_PAR", par.createParameterString(par.structurecreatedb).c_str());
-    if (useFastMultimerCluster) {
-        Debug(Debug::INFO) << "chain-tm-threshold " << par.filtChainTmThr
-                           << " is at least 0.5, routing easy-multimercluster to multimercluster_fast\n";
-        cmd.addVariable("MULTIMERCLUSTER_MODULE", "multimercluster_fast");
-        cmd.addVariable("MULTIMERCLUSTER_PAR", par.createParameterString(par.multimerclusterfastworkflow, true).c_str());
-    } else {
-        cmd.addVariable("MULTIMERCLUSTER_MODULE", "multimercluster");
-        cmd.addVariable("MULTIMERCLUSTER_PAR", par.createParameterString(par.multimerclusterworkflow, true).c_str());
-    }
+    Debug(Debug::INFO) << "Routing easy-multimercluster to multimercluster\n";
+    cmd.addVariable("MULTIMERCLUSTER_MODULE", "multimercluster");
+    cmd.addVariable("MULTIMERCLUSTER_PAR", par.createParameterString(par.multimerclusterworkflow, true).c_str());
     cmd.addVariable("THREADS_PAR", par.createParameterString(par.onlythreads).c_str());
     cmd.addVariable("CREATESUBDB_PAR", par.createParameterString(par.createsubdb).c_str());
     cmd.addVariable("RESULT2REPSEQ_PAR", par.createParameterString(par.result2repseq).c_str());

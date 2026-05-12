@@ -33,10 +33,6 @@ static std::string stripOptionAndValue(const std::string &params, const std::str
     return result;
 }
 
-static bool shouldUseOriginalMultimerCluster(const float chainTmThreshold) {
-    return chainTmThreshold < 0.5f;
-}
-
 void setMultimerClusterFastDefaults(LocalParameters *p) {
     p->filtMultTmThr = 0.65;
     p->filtChainTmThr = 0.001;
@@ -62,19 +58,13 @@ int multimercluster_fast(int argc, const char **argv, const Command &command) {
     par.addBacktrace = true;
     par.PARAM_ADD_BACKTRACE.wasSet = true;
     par.clusteringSetMode = 1;
-    const bool useOriginalMultimerCluster = shouldUseOriginalMultimerCluster(par.filtChainTmThr);
     std::string chainTmThreshold = SSTR(par.filtChainTmThr);
     std::string chainCoverageThreshold = SSTR(par.covThr);
     std::string chainCoverageMode = SSTR(par.covMode);
     const std::string structureAlignTmThreshold = SSTR(par.filtChainTmThr);
 
-    if (useOriginalMultimerCluster) {
-        Debug(Debug::INFO) << "chain-tm-threshold " << par.filtChainTmThr
-                           << " is below 0.5, falling back to multimercluster\n";
-    } else {
-        Debug(Debug::INFO) << "Using multimercluster_fast with chain TM threshold "
-                           << par.filtChainTmThr << " for both chain clustering and structure alignment\n";
-    }
+    Debug(Debug::INFO) << "Using multimercluster_fast with chain TM threshold "
+                       << par.filtChainTmThr << " for both chain clustering and structure alignment\n";
 
     std::string tmpDir = par.filenames.back();
     std::string hash = SSTR(par.hashParameter(command.databases, par.filenames, *command.params));
@@ -98,7 +88,7 @@ int multimercluster_fast(int argc, const char **argv, const Command &command) {
     std::string structureAlignPar = par.createParameterString(par.structurealign);
     structureAlignPar = stripOptionAndValue(structureAlignPar, "--tmscore-threshold");
     const std::string multimerClusterPar = par.createParameterString(par.multimerclusterworkflow, true);
-    cmd.addVariable("USE_ORIGINAL_MULTIMERCLUSTER", useOriginalMultimerCluster ? "TRUE" : NULL);
+    cmd.addVariable("USE_ORIGINAL_MULTIMERCLUSTER", NULL);
     cmd.addVariable("MULTIMERCLUSTER_PAR", multimerClusterPar.c_str());
     cmd.addVariable("CHAINCLUSTER_PAR", chainClusterPar.c_str());
     cmd.addVariable("CHAIN_TM_THRESHOLD", chainTmThreshold.c_str());
