@@ -310,6 +310,18 @@ std::vector<Command> foldseekCommands = {
                                            {"complexDB", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::alignmentDb}
                                    }
         },
+        {"scoremultimerfast", scoremultimerfast, &localPar.scoremultimer, COMMAND_ALIGNMENT,
+                "Get multimer level alignments from alignmentDB using seed transforms from structurealign hits",
+                "foldseek scoremultimerfast queryDB targetDB alignmentDB complexDB\n",
+                "OpenAI Codex & Sooyoung Cha <ellen2g77@gmail.com>",
+                "<i:queryDb> <i:targetDb> <i:alignmentDB> <o:complexDB>",
+                CITATION_FOLDSEEK_MULTIMER, {
+                                           {"queryDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA | DbType::NEED_HEADER, &DbValidator::sequenceDb},
+                                           {"targetDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA | DbType::NEED_HEADER, &DbValidator::sequenceDb},
+                                           {"alignmentDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::alignmentDb},
+                                           {"complexDB", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::alignmentDb}
+                                   }
+        },
         {"scorecomplex", scoremultimer, &localPar.scoremultimer, COMMAND_HIDDEN,
                 "", NULL, "", "", CITATION_FOLDSEEK_MULTIMER, {{"",DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, NULL}}
         },

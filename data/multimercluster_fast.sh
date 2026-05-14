@@ -35,8 +35,8 @@ else
 
     if notExists "${TMP_PATH}/multimer_result.dbtype"; then
         # shellcheck disable=SC2086
-        "$MMSEQS" scoremultimer "${INPUT}" "${INPUT}" "${TMP_PATH}/candidate_aln" "${TMP_PATH}/multimer_result" ${SCOREMULTIMER_PAR} \
-            || fail "scoremultimer died"
+        "$MMSEQS" scoremultimerfast "${INPUT}" "${INPUT}" "${TMP_PATH}/candidate_aln" "${TMP_PATH}/multimer_result" ${SCOREMULTIMER_PAR} \
+            || fail "scoremultimerfast died"
     fi
 
     if notExists "${RESULT}.dbtype"; then
