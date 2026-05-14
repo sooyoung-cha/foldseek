@@ -15,9 +15,11 @@ if [ -n "${USE_ORIGINAL_MULTIMERCLUSTER}" ]; then
             || fail "multimercluster died"
     fi
 else
+    CHAIN_CLUSTER_TM_THRESHOLD=$(awk -v thr="${CHAIN_TM_THRESHOLD}" 'BEGIN { printf "%.6f", thr - 0.15 }')
+
     if notExists "${TMP_PATH}/chain_clu.dbtype"; then
         # shellcheck disable=SC2086
-        "$MMSEQS" cluster "${INPUT}" "${TMP_PATH}/chain_clu" "${TMP_PATH}/chaincluster_tmp" --remove-tmp-files 0 --tmscore-threshold "${CHAIN_TM_THRESHOLD}" -c "${CHAIN_CLUSTER_C}" --cov-mode "${CHAIN_CLUSTER_COV_MODE}" ${CHAINCLUSTER_PAR} \
+        "$MMSEQS" cluster "${INPUT}" "${TMP_PATH}/chain_clu" "${TMP_PATH}/chaincluster_tmp" --remove-tmp-files 0 --tmscore-threshold "${CHAIN_CLUSTER_TM_THRESHOLD}" -c "${CHAIN_CLUSTER_C}" --cov-mode "${CHAIN_CLUSTER_COV_MODE}" ${CHAINCLUSTER_PAR} \
             || fail "chain cluster died"
     fi
 
