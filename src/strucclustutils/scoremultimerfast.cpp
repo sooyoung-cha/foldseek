@@ -21,6 +21,8 @@
 #endif
 
 #define INTERFACE_THRESHOLD 8
+#define MIN_SEED_PROXIMITY_THRESHOLD 0.75
+#define SEED_PROXIMITY_SCALE 1.5
 
 struct PairAlignment {
     unsigned int qChainKey;
@@ -92,6 +94,133 @@ static void setTransformStrings(const TMaligner::TMscoreResult &tm, std::string 
     uString.append(std::to_string(tm.u[0][0]) + sep + std::to_string(tm.u[0][1]) + sep + std::to_string(tm.u[0][2]) + sep);
     uString.append(std::to_string(tm.u[1][0]) + sep + std::to_string(tm.u[1][1]) + sep + std::to_string(tm.u[1][2]) + sep);
     uString.append(std::to_string(tm.u[2][0]) + sep + std::to_string(tm.u[2][1]) + sep + std::to_string(tm.u[2][2]));
+}
+
+static double getTransformDistance(const TMaligner::TMscoreResult &lhs, const TMaligner::TMscoreResult &rhs) {
+    double dist = 0.0;
+    for (size_t i = 0; i < 3; ++i) {
+        for (size_t j = 0; j < 3; ++j) {
+            const double diff = static_cast<double>(lhs.u[i][j]) - static_cast<double>(rhs.u[i][j]);
+            dist += diff * diff;
+        }
+    }
+    for (size_t i = 0; i < 3; ++i) {
+        const double diff = static_cast<double>(lhs.t[i]) - static_cast<double>(rhs.t[i]);
+        dist += diff * diff;
+    }
+    return std::sqrt(dist);
+}
+
+static double computeSeedProximityThreshold(const std::vector<PairAlignment> &pairAlignments) {
+    if (pairAlignments.size() <= 2) {
+        return 0.0;
+    }
+
+    std::vector<double> nearestDistances;
+    nearestDistances.reserve(pairAlignments.size());
+    for (size_t i = 0; i < pairAlignments.size(); ++i) {
+        double nearest = std::numeric_limits<double>::infinity();
+        for (size_t j = 0; j < pairAlignments.size(); ++j) {
+            if (i == j) {
+                continue;
+            }
+            nearest = std::min(nearest, getTransformDistance(pairAlignments[i].tmResult, pairAlignments[j].tmResult));
+        }
+        if (std::isfinite(nearest)) {
+            nearestDistances.emplace_back(nearest);
+        }
+    }
+
+    if (nearestDistances.empty()) {
+        return 0.0;
+    }
+    const size_t medianIdx = nearestDistances.size() / 2;
+    std::nth_element(nearestDistances.begin(), nearestDistances.begin() + medianIdx, nearestDistances.end());
+    return std::max(MIN_SEED_PROXIMITY_THRESHOLD, nearestDistances[medianIdx] * SEED_PROXIMITY_SCALE);
+}
+
+static std::vector<size_t> selectRepresentativeSeeds(const std::vector<PairAlignment> &pairAlignments) {
+    std::vector<size_t> representatives;
+    if (pairAlignments.empty()) {
+        return representatives;
+    }
+    if (pairAlignments.size() <= 2) {
+        representatives.reserve(pairAlignments.size());
+        for (size_t i = 0; i < pairAlignments.size(); ++i) {
+            representatives.emplace_back(i);
+        }
+        return representatives;
+    }
+
+    const double threshold = computeSeedProximityThreshold(pairAlignments);
+    if (threshold <= 0.0) {
+        representatives.reserve(pairAlignments.size());
+        for (size_t i = 0; i < pairAlignments.size(); ++i) {
+            representatives.emplace_back(i);
+        }
+        return representatives;
+    }
+
+    const size_t seedCount = pairAlignments.size();
+    std::vector<std::vector<size_t> > neighbors(seedCount);
+    for (size_t i = 0; i < seedCount; ++i) {
+        neighbors[i].emplace_back(i);
+        for (size_t j = i + 1; j < seedCount; ++j) {
+            const double dist = getTransformDistance(pairAlignments[i].tmResult, pairAlignments[j].tmResult);
+            if (dist <= threshold) {
+                neighbors[i].emplace_back(j);
+                neighbors[j].emplace_back(i);
+            }
+        }
+    }
+
+    std::vector<char> visited(seedCount, 0);
+    std::vector<size_t> component;
+    std::vector<size_t> stack;
+    for (size_t start = 0; start < seedCount; ++start) {
+        if (visited[start] != 0) {
+            continue;
+        }
+        component.clear();
+        stack.clear();
+        stack.emplace_back(start);
+        visited[start] = 1;
+        while (stack.empty() == false) {
+            const size_t curr = stack.back();
+            stack.pop_back();
+            component.emplace_back(curr);
+            for (size_t nIdx = 0; nIdx < neighbors[curr].size(); ++nIdx) {
+                const size_t next = neighbors[curr][nIdx];
+                if (visited[next] == 0) {
+                    visited[next] = 1;
+                    stack.emplace_back(next);
+                }
+            }
+        }
+
+        size_t medoid = component[0];
+        double bestSum = std::numeric_limits<double>::infinity();
+        double bestSeedScore = -std::numeric_limits<double>::infinity();
+        for (size_t cIdx = 0; cIdx < component.size(); ++cIdx) {
+            const size_t candidate = component[cIdx];
+            double distSum = 0.0;
+            for (size_t otherIdx = 0; otherIdx < component.size(); ++otherIdx) {
+                if (candidate == component[otherIdx]) {
+                    continue;
+                }
+                distSum += getTransformDistance(pairAlignments[candidate].tmResult, pairAlignments[component[otherIdx]].tmResult);
+            }
+            const double seedScore = pairAlignments[candidate].tmResult.tmscore;
+            if (distSum < bestSum || (distSum == bestSum && seedScore > bestSeedScore)) {
+                bestSum = distSum;
+                bestSeedScore = seedScore;
+                medoid = candidate;
+            }
+        }
+        representatives.emplace_back(medoid);
+    }
+
+    return representatives;
 }
 
 static float getTMd0(float normLen) {
@@ -693,7 +822,9 @@ int scoremultimerfast(int argc, const char **argv, const Command &command) {
                 }
 
                 BestSeedResult bestResult;
-                for (size_t seedIdx = 0; seedIdx < pairAlignments.size(); ++seedIdx) {
+                const std::vector<size_t> representativeSeeds = selectRepresentativeSeeds(pairAlignments);
+                for (size_t repIdx = 0; repIdx < representativeSeeds.size(); ++repIdx) {
+                    const size_t seedIdx = representativeSeeds[repIdx];
                     BestSeedResult candidate;
                     if (!evaluateSeed(
                             par,
