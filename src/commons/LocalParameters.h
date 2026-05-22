@@ -211,7 +211,7 @@ public:
     int prostt5SplitLength;
     int minAlignedChains;
     int multiDomain;
-    int viewResults;
+    bool viewResults;
     std::string structtyPath;
 
     static std::vector<int> getOutputFormat(
