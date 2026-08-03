@@ -536,8 +536,8 @@ private:
 
 class ComplexScorer {
 public:
-    ComplexScorer(IndexReader *q3diDbr, IndexReader *t3diDbr, DBReader<unsigned int> &alnDbr, DBReader<unsigned int> *qCaDbr, DBReader<unsigned int> *tCaDbr, unsigned int thread_idx, float minAssignedChainsRatio, int monomerIncludeMode)
-        : q3diDbr(q3diDbr), t3diDbr(t3diDbr), alnDbr(alnDbr), qCaDbr(qCaDbr), tCaDbr(tCaDbr), thread_idx(thread_idx), minAssignedChainsRatio(minAssignedChainsRatio), monomerIncludeMode(monomerIncludeMode)  {
+    ComplexScorer(IndexReader *q3diDbr, IndexReader *t3diDbr, DBReader<unsigned int> &alnDbr, DBReader<unsigned int> *qCaDbr, DBReader<unsigned int> *tCaDbr, unsigned int thread_idx, float minAssignedChainsRatio, int monomerIncludeMode, float filtMultTmThr, int covMode)
+        : q3diDbr(q3diDbr), t3diDbr(t3diDbr), alnDbr(alnDbr), qCaDbr(qCaDbr), tCaDbr(tCaDbr), thread_idx(thread_idx), minAssignedChainsRatio(minAssignedChainsRatio), monomerIncludeMode(monomerIncludeMode), filtMultTmThr(filtMultTmThr), covMode(covMode)  {
         maxChainLen = std::max(q3diDbr->sequenceReader->getMaxSeqLen()+1, t3diDbr->sequenceReader->getMaxSeqLen()+1);
         maxResLen = maxChainLen * 2;
         tmAligner = new TMaligner(maxResLen, false, true, false);
@@ -546,7 +546,12 @@ public:
         delete tmAligner;
     }
 
-    void getSearchResultLinesMap(std::vector<unsigned int> &qChainKeys, alignmentLinesMap_t &alignmentLinesMap) {
+    void getSearchResultLinesMap(
+            std::vector<unsigned int> &qChainKeys,
+            alignmentLinesMap_t &alignmentLinesMap,
+            const chainKeyToComplexId_t &dbChainKeyToComplexIdMap,
+            std::set<unsigned int> &dbFoundComplexIds
+    ) {
         qResLen = getQueryResidueLength(qChainKeys);
         if (qResLen == 0) {
             return;
@@ -569,6 +574,12 @@ public:
                 const auto dbChainKey = static_cast<unsigned int>(strtoul(dbKeyBuffer, NULL, 10));
                 Util::getLine(data, dataSize, lineBuffer, 1024);
                 alignmentLinesMap.insert({{qChainKey, dbChainKey}, static_cast<std::string>(lineBuffer)});
+                // remember which db complexes this query actually aligned to, so the
+                // caller can skip the ones that can never contribute an alignment
+                chainKeyToComplexId_t::const_iterator dbComplexIt = dbChainKeyToComplexIdMap.find(dbChainKey);
+                if (dbComplexIt != dbChainKeyToComplexIdMap.end()) {
+                    dbFoundComplexIds.insert(dbComplexIt->second);
+                }
                 data = Util::skipLine(data);
             } // while end
         } // for end
@@ -580,6 +591,17 @@ public:
         if (dbResLen == 0) {
             removeCurrAlnLines(qChainKeys, dbChainKeys, alignmentLinesMap);
             return;
+        }
+
+        // TM score is normalised by residue length and the raw score cannot
+        // exceed min(qResLen, dbResLen), so the longer side's TM is capped at
+        // min/max. Bidirectional cov mode needs both sides over the threshold.
+        if (filtMultTmThr > 0.0f && covMode == Parameters::COV_MODE_BIDIRECTIONAL) {
+            unsigned int shorter = std::min(qResLen, dbResLen);
+            unsigned int longer  = std::max(qResLen, dbResLen);
+            if (longer > 0 && static_cast<float>(shorter) / static_cast<float>(longer) < filtMultTmThr) {
+                return;
+            }
         }
 
         Coordinate16 qCoords;
@@ -677,6 +699,8 @@ private:
     const unsigned int thread_idx;
     const float minAssignedChainsRatio;
     const int monomerIncludeMode;
+    const float filtMultTmThr;
+    const int covMode;
     TMaligner *tmAligner;
     unsigned int maxChainLen;
     unsigned int maxResLen;
@@ -1254,10 +1278,11 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
         resultToWrite_t resultToWrite;
         resultToWrite_t currentResultToWrite;
         alignmentLinesMap_t alignmentLinesMap;
+        std::set<unsigned int> dbFoundComplexIds;
         SearchResult searchResult;
         std::vector<Assignment> assignments;
         std::map<unsigned int, std::pair<Assignment, unsigned int>> tCompBestAssignment;
-        ComplexScorer complexScorer(q3DiDbr, t3DiDbr, alnDbr, qCaDbr, tCaDbr, thread_idx, minAssignedChainsRatio, monomerIncludeMode);
+        ComplexScorer complexScorer(q3DiDbr, t3DiDbr, alnDbr, qCaDbr, tCaDbr, thread_idx, minAssignedChainsRatio, monomerIncludeMode, par.filtMultTmThr, par.covMode);
 #pragma omp for schedule(dynamic, 1)
         // for each q complex
         for (size_t qCompIdx = 0; qCompIdx < qComplexIndices.size(); qCompIdx++) {
@@ -1268,13 +1293,16 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
                 continue;
             }
             // read the search file only once
-            complexScorer.getSearchResultLinesMap(qChainKeys, alignmentLinesMap);
+            complexScorer.getSearchResultLinesMap(qChainKeys, alignmentLinesMap, dbChainKeyToComplexIdMap, dbFoundComplexIds);
             if (alignmentLinesMap.empty()) {
+                dbFoundComplexIds.clear();
                 continue;
             }
-            // for each db complex
-            for (size_t dbId = 0; dbId < dbComplexIndices.size(); dbId++) {
-                unsigned int dbComplexId = dbComplexIndices[dbId];
+            // for each db complex that has at least one chain alignment.
+            // std::set iterates in ascending complex id order, matching the
+            // order of dbComplexIndices, so the result order is unchanged.
+            for (std::set<unsigned int>::const_iterator dbIt = dbFoundComplexIds.begin(); dbIt != dbFoundComplexIds.end(); ++dbIt) {
+                unsigned int dbComplexId = *dbIt;
                 std::vector<unsigned int> &dbChainKeys = dbComplexIdToChainKeysMap.at(dbComplexId);
                 complexScorer.getSearchResultByDbComplex(qComplexId, dbComplexId, qChainKeys, dbChainKeys, alignmentLinesMap, searchResult);
                 if (searchResult.alnVec.empty()) {
@@ -1330,6 +1358,7 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
             }
 
             alignmentLinesMap.clear();
+            dbFoundComplexIds.clear();
             assignments.clear();
             currentResultToWrite.clear();
             resultToWrite.clear();
