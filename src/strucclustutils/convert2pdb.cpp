@@ -1,5 +1,7 @@
 #include <cstring>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 #include "LocalParameters.h"
 #include "DBReader.h"
@@ -59,6 +61,67 @@ private:
     const complexIdToChainKeys_t& map;
     const std::vector<unsigned int>& complexIndices;
 };
+
+// PDB reserves a single column (22) for the chain identifier, so chain names that
+// are longer than one character cannot be written as they are. Names that differ
+// only after the first character ("Sd" and "SD") or only in a suffix ("A1", "A2")
+// would end up in the same chain, therefore every chain of an output file gets its
+// own identifier out of this pool. The original name is kept in a REMARK line.
+static const char pdbChainIdPool[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+std::string getChainName(DBReader<unsigned int>& db, unsigned int key) {
+    size_t lookupId = db.getLookupIdByKey(key);
+    std::string name = db.getLookupEntryName(lookupId);
+    return name.substr(name.find_last_of('_') + 1);
+}
+
+void assignChainIds(const std::vector<std::string>& chainNames, std::vector<char>& chainIds) {
+    const size_t poolSize = sizeof(pdbChainIdPool) - 1;
+    bool taken[256];
+    memset(taken, 0, sizeof(taken));
+    chainIds.assign(chainNames.size(), '\0');
+    // keep the first character of the chain name whenever it is still available,
+    // this way chains that fit into one column keep the name they had before
+    for (size_t i = 0; i < chainNames.size(); ++i) {
+        char candidate = chainNames[i].empty() ? 'A' : chainNames[i][0];
+        if (candidate <= ' ' || candidate > '~') {
+            continue;
+        }
+        if (taken[(unsigned char)candidate] == false) {
+            taken[(unsigned char)candidate] = true;
+            chainIds[i] = candidate;
+        }
+    }
+    // every chain that could not keep its character gets the next free identifier
+    size_t next = 0;
+    for (size_t i = 0; i < chainNames.size(); ++i) {
+        if (chainIds[i] != '\0') {
+            continue;
+        }
+        while (next < poolSize && taken[(unsigned char)pdbChainIdPool[next]]) {
+            next++;
+        }
+        if (next < poolSize) {
+            taken[(unsigned char)pdbChainIdPool[next]] = true;
+            chainIds[i] = pdbChainIdPool[next];
+        } else {
+            // more chains than PDB can distinguish, fall back to the old behaviour
+            Debug(Debug::WARNING) << "Chain " << chainNames[i] << " cannot get a unique chain identifier, "
+                                  << "PDB supports at most " << poolSize << " chains per file\n";
+            chainIds[i] = chainNames[i].empty() ? 'A' : chainNames[i][0];
+        }
+    }
+}
+
+void writeChainRemarks(FILE* handle, const std::vector<std::string>& chainNames, const std::vector<char>& chainIds) {
+    for (size_t i = 0; i < chainNames.size(); ++i) {
+        // only chains whose name does not survive the single column need a mapping
+        if (chainNames[i].empty() || (chainNames[i].size() == 1 && chainNames[i][0] == chainIds[i])) {
+            continue;
+        }
+        fprintf(handle, "REMARK 999 CHAIN %c ORIGINAL NAME %s\n", chainIds[i], chainNames[i].c_str());
+    }
+}
 
 void writeTitle(FILE* handle, const char* headerData, size_t headerLen) {
     int remainingHeader = headerLen;
@@ -148,6 +211,8 @@ int convert2pdb(int argc, const char **argv, const Command& command) {
 #pragma omp for schedule(dynamic, 1)
         for (size_t i = 0; i < size; ++i) {
             std::pair<const unsigned int*, size_t> keys = keyIterator->getDbKeys(i);
+            std::vector<std::string> chainNames;
+            std::vector<char> chainIds;
             if (outputMode != LocalParameters::PDB_OUTPUT_MODE_MULTIMODEL) {
                 unsigned int key = keys.first[0];
                 // std::string name = db.getLookupEntryName(key);
@@ -173,9 +238,16 @@ int convert2pdb(int argc, const char **argv, const Command& command) {
                 const char* headerData = db_header.getData(headerId, thread_idx);
                 const size_t headerLen = db_header.getEntryLen(headerId) - 2;
                 writeTitle(threadHandle, headerData, headerLen);
+
+                chainNames.reserve(keys.second);
+                for (size_t j = 0; j < keys.second; ++j) {
+                    chainNames.emplace_back(getChainName(db, keys.first[j]));
+                }
+                assignChainIds(chainNames, chainIds);
+                writeChainRemarks(threadHandle, chainNames, chainIds);
             }
 
-            std::string chainName = "A";
+            char chainId = 'A';
             for (size_t j = 0; j < keys.second; ++j) {
                 unsigned int key = keys.first[j];
 
@@ -197,13 +269,7 @@ int convert2pdb(int argc, const char **argv, const Command& command) {
                     const size_t headerLen = db_header.getEntryLen(headerId) - 2;
                     writeTitle(threadHandle, headerData, headerLen);
                 } else {
-                    // std::string name = db.getLookupEntryName(key);
-                    size_t lookupKey = db.getLookupIdByKey(key);
-                    std::string name = db.getLookupEntryName(lookupKey);
-                    chainName = name.substr(name.find_last_of('_') + 1);
-                    if (chainName.size() == 0) {
-                        chainName = "A";
-                    }
+                    chainId = chainIds[j];
                 }
                 for (size_t j = 0; j < seqLen; ++j) {
                     // make AA upper case
@@ -212,7 +278,7 @@ int convert2pdb(int argc, const char **argv, const Command& command) {
                         aa = 'X';
                     }
                     const char* aa3 = threeLetterLookup[(int)(aa - 'A')];
-                    fprintf(threadHandle, "ATOM  %5d  CA  %s %c%4d    %8.3f%8.3f%8.3f\n", (int)(j + 1), aa3, chainName[0], int(j + 1), ca[j], ca[j + (1 * seqLen)], ca[j + (2 * seqLen)]);
+                    fprintf(threadHandle, "ATOM  %5d  CA  %s %c%4d    %8.3f%8.3f%8.3f\n", (int)(j + 1), aa3, chainId, int(j + 1), ca[j], ca[j + (1 * seqLen)], ca[j + (2 * seqLen)]);
                 }
                 if (outputMode == LocalParameters::PDB_OUTPUT_MODE_MULTIMODEL) {
                     fprintf(threadHandle, "ENDMDL\n");
