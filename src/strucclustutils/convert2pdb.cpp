@@ -1,7 +1,5 @@
 #include <cstring>
 #include <cstdio>
-#include <string>
-#include <vector>
 
 #include "LocalParameters.h"
 #include "DBReader.h"
@@ -62,66 +60,10 @@ private:
     const std::vector<unsigned int>& complexIndices;
 };
 
-// PDB reserves a single column (22) for the chain identifier, so chain names that
-// are longer than one character cannot be written as they are. Names that differ
-// only after the first character ("Sd" and "SD") or only in a suffix ("A1", "A2")
-// would end up in the same chain, therefore every chain of an output file gets its
-// own identifier out of this pool. The original name is kept in a REMARK line.
-static const char pdbChainIdPool[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-std::string getChainName(DBReader<unsigned int>& db, unsigned int key) {
-    size_t lookupId = db.getLookupIdByKey(key);
-    std::string name = db.getLookupEntryName(lookupId);
-    return name.substr(name.find_last_of('_') + 1);
-}
-
-void assignChainIds(const std::vector<std::string>& chainNames, std::vector<char>& chainIds) {
-    const size_t poolSize = sizeof(pdbChainIdPool) - 1;
-    bool taken[256];
-    memset(taken, 0, sizeof(taken));
-    chainIds.assign(chainNames.size(), '\0');
-    // keep the first character of the chain name whenever it is still available,
-    // this way chains that fit into one column keep the name they had before
-    for (size_t i = 0; i < chainNames.size(); ++i) {
-        char candidate = chainNames[i].empty() ? 'A' : chainNames[i][0];
-        if (candidate <= ' ' || candidate > '~') {
-            continue;
-        }
-        if (taken[(unsigned char)candidate] == false) {
-            taken[(unsigned char)candidate] = true;
-            chainIds[i] = candidate;
-        }
-    }
-    // every chain that could not keep its character gets the next free identifier
-    size_t next = 0;
-    for (size_t i = 0; i < chainNames.size(); ++i) {
-        if (chainIds[i] != '\0') {
-            continue;
-        }
-        while (next < poolSize && taken[(unsigned char)pdbChainIdPool[next]]) {
-            next++;
-        }
-        if (next < poolSize) {
-            taken[(unsigned char)pdbChainIdPool[next]] = true;
-            chainIds[i] = pdbChainIdPool[next];
-        } else {
-            // more chains than PDB can distinguish, fall back to the old behaviour
-            Debug(Debug::WARNING) << "Chain " << chainNames[i] << " cannot get a unique chain identifier, "
-                                  << "PDB supports at most " << poolSize << " chains per file\n";
-            chainIds[i] = chainNames[i].empty() ? 'A' : chainNames[i][0];
-        }
-    }
-}
-
-void writeChainRemarks(FILE* handle, const std::vector<std::string>& chainNames, const std::vector<char>& chainIds) {
-    for (size_t i = 0; i < chainNames.size(); ++i) {
-        // only chains whose name does not survive the single column need a mapping
-        if (chainNames[i].empty() || (chainNames[i].size() == 1 && chainNames[i][0] == chainIds[i])) {
-            continue;
-        }
-        fprintf(handle, "REMARK 999 CHAIN %c ORIGINAL NAME %s\n", chainIds[i], chainNames[i].c_str());
-    }
-}
+// PDB has only one column for the chain identifier, so chain names that need more
+// than one character ("Sd" and "SD", "A1" and "A2") have to be mapped to distinct
+// characters out of this pool, otherwise they end up as one chain
+static const char chainIdPool[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
 void writeTitle(FILE* handle, const char* headerData, size_t headerLen) {
     int remainingHeader = headerLen;
@@ -211,8 +153,6 @@ int convert2pdb(int argc, const char **argv, const Command& command) {
 #pragma omp for schedule(dynamic, 1)
         for (size_t i = 0; i < size; ++i) {
             std::pair<const unsigned int*, size_t> keys = keyIterator->getDbKeys(i);
-            std::vector<std::string> chainNames;
-            std::vector<char> chainIds;
             if (outputMode != LocalParameters::PDB_OUTPUT_MODE_MULTIMODEL) {
                 unsigned int key = keys.first[0];
                 // std::string name = db.getLookupEntryName(key);
@@ -238,16 +178,12 @@ int convert2pdb(int argc, const char **argv, const Command& command) {
                 const char* headerData = db_header.getData(headerId, thread_idx);
                 const size_t headerLen = db_header.getEntryLen(headerId) - 2;
                 writeTitle(threadHandle, headerData, headerLen);
-
-                chainNames.reserve(keys.second);
-                for (size_t j = 0; j < keys.second; ++j) {
-                    chainNames.emplace_back(getChainName(db, keys.first[j]));
-                }
-                assignChainIds(chainNames, chainIds);
-                writeChainRemarks(threadHandle, chainNames, chainIds);
             }
 
             char chainId = 'A';
+            bool takenChainId[256];
+            memset(takenChainId, 0, sizeof(takenChainId));
+            size_t nextChainId = 0;
             for (size_t j = 0; j < keys.second; ++j) {
                 unsigned int key = keys.first[j];
 
@@ -269,7 +205,24 @@ int convert2pdb(int argc, const char **argv, const Command& command) {
                     const size_t headerLen = db_header.getEntryLen(headerId) - 2;
                     writeTitle(threadHandle, headerData, headerLen);
                 } else {
-                    chainId = chainIds[j];
+                    size_t lookupKey = db.getLookupIdByKey(key);
+                    std::string name = db.getLookupEntryName(lookupKey);
+                    std::string chainName = name.substr(name.find_last_of('_') + 1);
+                    // keep the first character of the name, take the next free
+                    // identifier if another chain of this file already uses it
+                    chainId = chainName.empty() ? 'A' : chainName[0];
+                    if (takenChainId[(unsigned char)chainId]) {
+                        while (nextChainId < sizeof(chainIdPool) - 1 && takenChainId[(unsigned char)chainIdPool[nextChainId]]) {
+                            nextChainId++;
+                        }
+                        if (nextChainId < sizeof(chainIdPool) - 1) {
+                            chainId = chainIdPool[nextChainId];
+                        } else {
+                            Debug(Debug::WARNING) << "Cannot give chain " << chainName << " a unique identifier, "
+                                                  << "PDB supports at most " << sizeof(chainIdPool) - 1 << " chains per file\n";
+                        }
+                    }
+                    takenChainId[(unsigned char)chainId] = true;
                 }
                 for (size_t j = 0; j < seqLen; ++j) {
                     // make AA upper case
