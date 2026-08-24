@@ -18,7 +18,6 @@ void setEasyInterfaceClusterDefaults(LocalParameters *p) {
     p->exhaustiveSearch = 1;
     p->evalThr = 10000000;
     p->lddtThr = 0.2;
-    p->maxIteration = 1;
 }
 
 void mustsetEasyInterfaceCluster(LocalParameters *p) {
@@ -32,7 +31,6 @@ void mustsetEasyInterfaceCluster(LocalParameters *p) {
     p->PARAM_MULTIMER_TM_THRESHOLD.wasSet = true;
     p->PARAM_CHAIN_TM_THRESHOLD.wasSet = true;
     p->PARAM_INTERFACE_LDDT_THRESHOLD.wasSet = true;
-    p->PARAM_MAXITERATIONS.wasSet = true;
     p->PARAM_LDDT_THRESHOLD.wasSet = true;
     p->PARAM_E.wasSet = true;
     p->PARAM_EXHAUSTIVE_SEARCH.wasSet = true;
