@@ -546,7 +546,7 @@ public:
         delete tmAligner;
     }
 
-    void getSearchResultLinesMap(std::vector<unsigned int> &qChainKeys, alignmentLinesMap_t &alignmentLinesMap) {
+    void getSearchResultLinesMap(std::vector<unsigned int> &qChainKeys, alignmentLinesMap_t &alignmentLinesMap, const chainKeyToComplexId_t &dbChainKeyToComplexIdMap, std::set<unsigned int> &dbComplexIdSet) {
         qResLen = getQueryResidueLength(qChainKeys);
         if (qResLen == 0) {
             return;
@@ -567,8 +567,14 @@ public:
             while (*data != '\0') {
                 Util::parseKey(data, dbKeyBuffer);
                 const auto dbChainKey = static_cast<unsigned int>(strtoul(dbKeyBuffer, NULL, 10));
-                Util::getLine(data, dataSize, lineBuffer, 1024);
-                alignmentLinesMap.insert({{qChainKey, dbChainKey}, static_cast<std::string>(lineBuffer)});
+                chainKeyToComplexId_t::const_iterator dbComplexIt = dbChainKeyToComplexIdMap.find(dbChainKey);
+                if (dbComplexIt != dbChainKeyToComplexIdMap.end()) {
+                    // remember the db complexes this query is actually aligned to,
+                    // so that the caller does not have to scan the whole target db
+                    dbComplexIdSet.insert(dbComplexIt->second);
+                    Util::getLine(data, dataSize, lineBuffer, 1024);
+                    alignmentLinesMap.insert({{qChainKey, dbChainKey}, static_cast<std::string>(lineBuffer)});
+                }
                 data = Util::skipLine(data);
             } // while end
         } // for end
@@ -602,14 +608,17 @@ public:
             tmAligner->initQuery(queryCaData, &queryCaData[qLen], &queryCaData[qLen * 2], NULL, qLen);
             // for each alignment from the query chain
             for (auto dbChainKey: dbChainKeys) {
-                std::string &data = alignmentLinesMap[{qChainKey, dbChainKey}];
-                if (data.empty()) {
-                    alignmentLinesMap.erase({qChainKey, dbChainKey});
+                alignmentLinesMap_t::iterator alnLineIt = alignmentLinesMap.find({qChainKey, dbChainKey});
+                if (alnLineIt == alignmentLinesMap.end()) {
                     continue;
                 }
-                Matcher::result_t dbAlnResult = Matcher::parseAlignmentRecord(data.c_str());
+                if (alnLineIt->second.empty()) {
+                    alignmentLinesMap.erase(alnLineIt);
+                    continue;
+                }
+                Matcher::result_t dbAlnResult = Matcher::parseAlignmentRecord(alnLineIt->second.c_str());
                 if (dbAlnResult.backtrace.empty()) {
-                    alignmentLinesMap.erase({qChainKey, dbChainKey});
+                    alignmentLinesMap.erase(alnLineIt);
                     continue;
                 }
                 hasBacktrace = true;
@@ -621,7 +630,7 @@ public:
                 dbChain = Chain(dbComplexId, dbChainKey);
                 TMaligner::TMscoreResult tmResult = tmAligner->computeTMscore(targetCaData, &targetCaData[dbLen], &targetCaData[dbLen * 2], dbLen, dbAlnResult.qStartPos, dbAlnResult.dbStartPos, Matcher::uncompressAlignment(dbAlnResult.backtrace), dbAlnResult.qLen);
                 currAlns.emplace_back(qChain, dbChain, queryCaData, targetCaData, dbAlnResult, tmResult);
-                alignmentLinesMap.erase({qChainKey, dbChainKey});
+                alignmentLinesMap.erase(alnLineIt);
             }
         } // for end
 
@@ -720,12 +729,13 @@ private:
         }
     }
 
-    static bool getQueryAlnResult(unsigned int qChainKey, const std::vector<unsigned int> &dbChainKeys,  alignmentLinesMap_t &alignmentLinesMap, Matcher::result_t &qAlnResult) {
+    static bool getQueryAlnResult(unsigned int qChainKey, const std::vector<unsigned int> &dbChainKeys,  const alignmentLinesMap_t &alignmentLinesMap, Matcher::result_t &qAlnResult) {
         for (auto dbChainKey: dbChainKeys) {
-            if (alignmentLinesMap[{qChainKey, dbChainKey}].empty()) {
+            alignmentLinesMap_t::const_iterator alnLineIt = alignmentLinesMap.find({qChainKey, dbChainKey});
+            if (alnLineIt == alignmentLinesMap.end() || alnLineIt->second.empty()) {
                 continue;
             }
-            qAlnResult = Matcher::parseAlignmentRecord(alignmentLinesMap[{qChainKey, dbChainKey}].c_str());
+            qAlnResult = Matcher::parseAlignmentRecord(alnLineIt->second.c_str());
             return true;
         }
         return false;
@@ -1254,6 +1264,7 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
         resultToWrite_t resultToWrite;
         resultToWrite_t currentResultToWrite;
         alignmentLinesMap_t alignmentLinesMap;
+        std::set<unsigned int> dbComplexIdSet;
         SearchResult searchResult;
         std::vector<Assignment> assignments;
         std::map<unsigned int, std::pair<Assignment, unsigned int>> tCompBestAssignment;
@@ -1268,13 +1279,15 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
                 continue;
             }
             // read the search file only once
-            complexScorer.getSearchResultLinesMap(qChainKeys, alignmentLinesMap);
+            dbComplexIdSet.clear();
+            complexScorer.getSearchResultLinesMap(qChainKeys, alignmentLinesMap, dbChainKeyToComplexIdMap, dbComplexIdSet);
             if (alignmentLinesMap.empty()) {
+                progress.updateProgress();
                 continue;
             }
-            // for each db complex
-            for (size_t dbId = 0; dbId < dbComplexIndices.size(); dbId++) {
-                unsigned int dbComplexId = dbComplexIndices[dbId];
+            // for each db complex this query was actually aligned to
+            for (std::set<unsigned int>::const_iterator dbIt = dbComplexIdSet.begin(); dbIt != dbComplexIdSet.end(); ++dbIt) {
+                unsigned int dbComplexId = *dbIt;
                 std::vector<unsigned int> &dbChainKeys = dbComplexIdToChainKeysMap.at(dbComplexId);
                 complexScorer.getSearchResultByDbComplex(qComplexId, dbComplexId, qChainKeys, dbChainKeys, alignmentLinesMap, searchResult);
                 if (searchResult.alnVec.empty()) {
@@ -1287,11 +1300,13 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
             // Filter when multimercluster OR filtering paramters are set by user.
             if (par.filtMultTmThr + par.filtChainTmThr + par.filtInterfaceLddtThr > 0 ){
                 // for each query chain key
-                ComplexFilter filter(qChainKeys, q3DiDbr, qCaDbr, par, thread_idx);
-                filter.computeInterfaceRegion();
-                // for each assignment, filter
-                for (unsigned int assignmentId = 0; assignmentId < assignments.size(); assignmentId++){
-                    filter.filterAssignment(assignmentId, assignments[assignmentId], tCompBestAssignment, dbChainKeyToComplexIdMap, dbComplexIdToChainKeysMap);
+                if (!assignments.empty()) {
+                    ComplexFilter filter(qChainKeys, q3DiDbr, qCaDbr, par, thread_idx);
+                    filter.computeInterfaceRegion();
+                    // for each assignment, filter
+                    for (unsigned int assignmentId = 0; assignmentId < assignments.size(); assignmentId++){
+                        filter.filterAssignment(assignmentId, assignments[assignmentId], tCompBestAssignment, dbChainKeyToComplexIdMap, dbComplexIdToChainKeysMap);
+                    }
                 }
                 for (size_t qChainKeyIdx = 0; qChainKeyIdx < qChainKeys.size(); qChainKeyIdx++) {
                     resultToWrite.clear();
@@ -1330,6 +1345,7 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
             }
 
             alignmentLinesMap.clear();
+            dbComplexIdSet.clear();
             assignments.clear();
             currentResultToWrite.clear();
             resultToWrite.clear();
