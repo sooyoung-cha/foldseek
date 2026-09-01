@@ -1318,6 +1318,10 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
                     unsigned int & qKey = qChainKeys[qChainKeyIdx];
                     for (unsigned int assignmentId = 0; assignmentId < assignments.size(); assignmentId++){
                         Assignment &assignment = assignments[assignmentId];
+                        // --min-aligned-chains is applied even without the filtering parameters
+                        if (assignment.chainToChainResults.size() < (size_t)par.minAlignedChains) {
+                            continue;
+                        }
                         currentResultToWrite.clear();
                         assignment.getChainToChainResult(qKey, currentResultToWrite);
                         if (currentResultToWrite.empty()) {
