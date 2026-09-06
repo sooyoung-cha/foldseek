@@ -240,6 +240,16 @@ void getResult(std::string &result, std::string &currentResult, const Assignment
     result.append(currentResult);
 }
 
+// keep the chain keys in the result db even when nothing is reported for them.
+// downstream modules (e.g. clust in the multimercluster workflow) look up every
+// chain key of the input db and die on a missing entry.
+void writeEmptyResults(DBWriter &resultWriter, const std::vector<unsigned int> &qChainKeys, std::string &resultToWrite, unsigned int thread_idx) {
+    resultToWrite.clear();
+    for (size_t qChainKeyIdx = 0; qChainKeyIdx < qChainKeys.size(); qChainKeyIdx++) {
+        resultWriter.writeData(resultToWrite.c_str(), resultToWrite.length(), qChainKeys[qChainKeyIdx], thread_idx);
+    }
+}
+
 class DBSCANCluster {
 public:
     DBSCANCluster(SearchResult &searchResult, std::set<cluster_t> &finalClusters, float minCov) : searchResult(searchResult), finalClusters(finalClusters) {
@@ -1264,12 +1274,17 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
             unsigned int qComplexId = qComplexIndices[qCompIdx];
             std::vector<unsigned int> &qChainKeys = qComplexIdToChainKeysMap.at(qComplexId);
             if (monomerIncludeMode == SKIP_MONOMERS && qChainKeys.size() < MULTIPLE_CHAINED_COMPLEX) {
+                // write empty entries, otherwise the chain keys are missing in the result db
+                writeEmptyResults(resultWriter, qChainKeys, resultToWrite, thread_idx);
                 progress.updateProgress();
                 continue;
             }
             // read the search file only once
             complexScorer.getSearchResultLinesMap(qChainKeys, alignmentLinesMap);
             if (alignmentLinesMap.empty()) {
+                // write empty entries, otherwise the chain keys are missing in the result db
+                writeEmptyResults(resultWriter, qChainKeys, resultToWrite, thread_idx);
+                progress.updateProgress();
                 continue;
             }
             // for each db complex
