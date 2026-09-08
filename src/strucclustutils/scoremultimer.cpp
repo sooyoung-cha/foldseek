@@ -1264,12 +1264,18 @@ int scoremultimer(int argc, const char **argv, const Command &command) {
             unsigned int qComplexId = qComplexIndices[qCompIdx];
             std::vector<unsigned int> &qChainKeys = qComplexIdToChainKeysMap.at(qComplexId);
             if (monomerIncludeMode == SKIP_MONOMERS && qChainKeys.size() < MULTIPLE_CHAINED_COMPLEX) {
+                for (size_t qChainKeyIdx = 0; qChainKeyIdx < qChainKeys.size(); qChainKeyIdx++) {
+                    resultWriter.writeData("", 0, qChainKeys[qChainKeyIdx], thread_idx);
+                }
                 progress.updateProgress();
                 continue;
             }
             // read the search file only once
             complexScorer.getSearchResultLinesMap(qChainKeys, alignmentLinesMap);
             if (alignmentLinesMap.empty()) {
+                for (size_t qChainKeyIdx = 0; qChainKeyIdx < qChainKeys.size(); qChainKeyIdx++) {
+                    resultWriter.writeData("", 0, qChainKeys[qChainKeyIdx], thread_idx);
+                }
                 continue;
             }
             // for each db complex
