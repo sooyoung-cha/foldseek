@@ -178,14 +178,11 @@ int multimerprefilter(int argc, const char **argv, const Command &command) {
                 if (getMaximumMatching(compatible, dbChainNum) < needed) {
                     continue;
                 }
+                // the whole cross product of a surviving multimer pair is kept, so the
+                // alignment can still rescue chain pairs the search reported below its
+                // own E-value
                 for (size_t i = 0; i < qChainNum; i++) {
                     for (size_t j = 0; j < dbChainNum; j++) {
-                        // mode 0 keeps the whole cross product of a surviving multimer
-                        // pair, so the second alignment can still rescue chain pairs
-                        // that the search reported below its own E-value
-                        if (par.multimerPrefilterMode != 0 && compatible[i][j] == 0) {
-                            continue;
-                        }
                         if (tDbr.sequenceReader->getId(dbChainKeys[j]) == NOT_AVAILABLE_CHAIN_KEY) {
                             continue;
                         }

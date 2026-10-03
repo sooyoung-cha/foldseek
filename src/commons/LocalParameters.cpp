@@ -43,7 +43,6 @@ LocalParameters::LocalParameters() :
         PARAM_MIN_INTERFACE_RESIDUE_PER_CHAIN(PARAM_MIN_INTERFACE_RESIDUE_PER_CHAIN_ID, "--min-interface-residues-perchain", "Minimum number of interface residues per chain","save dimer/interface if there are N numbers of residues per chain" ,typeid(int), (void *) &minResidueNum, "^[0-9]{1}[0-9]*$"),
         PARAM_MULTIMER_TM_THRESHOLD(PARAM_MULTIMER_TM_THRESHOLD_ID,"--multimer-tm-threshold", "whole structure's TMscore threshold", "accept alignments with a multimer tmsore > thr [0.0,1.0]",typeid(float), (void *) &filtMultTmThr, "^0(\\.[0-9]+)?|1(\\.0+)?$"),
         PARAM_CHAIN_TM_THRESHOLD(PARAM_CHAIN_TM_THRESHOLD_ID,"--chain-tm-threshold", "chain TMscore threshold for filtermultimer", "accept alignments with a tmsore > thr [0.0,1.0]",typeid(float), (void *) &filtChainTmThr, "^0(\\.[0-9]+)?|1(\\.0+)?$"),
-        PARAM_MULTIMER_PREFILTER_MODE(PARAM_MULTIMER_PREFILTER_MODE_ID,"--multimer-prefilter-mode", "Multimer prefilter mode", "0: drop multimer pairs whose chains cannot be matched one to one\n1: additionally keep only the chain pairs the search reported, faster but loses pairs the second alignment would have rescued",typeid(int), (void *) &multimerPrefilterMode, "^[0-1]{1}$"),
         PARAM_INTERFACE_LDDT_THRESHOLD(PARAM_INTERFACE_LDDT_THRESHOLD_ID,"--interface-lddt-threshold", "Interface LDDT threshold", "accept alignments with a lddt > thr [0.0,1.0]",typeid(float), (void *) &filtInterfaceLddtThr, "^0(\\.[0-9]+)?|1(\\.0+)?$"),
         PARAM_MIN_ALIGNED_CHAINS(PARAM_MIN_ALIGNED_CHAINS_ID, "--min-aligned-chains", "Minimum threshold of aligned chains","save alignments with at least n chain aligned between query and target" ,typeid(int), (void *) &minAlignedChains, "^[0-9]{1}[0-9]*$"),
         PARAM_MULTIDOMAIN(PARAM_MULTIDOMAIN_ID, "--lolalign-multidomain", "MultiDomain Mode", "MultiDomain Mode LoLalign", typeid(int), (void *) &multiDomain, "^[0-1]{1}$"),
@@ -286,7 +285,6 @@ LocalParameters::LocalParameters() :
     expandmultimer.push_back(&PARAM_V);
 
     // multimerprefilter
-    multimerprefilter.push_back(&PARAM_MULTIMER_PREFILTER_MODE);
     multimerprefilter.push_back(&PARAM_COV_MODE);
     multimerprefilter.push_back(&PARAM_THREADS);
     multimerprefilter.push_back(&PARAM_COMPRESSED);
@@ -444,7 +442,6 @@ LocalParameters::LocalParameters() :
     minResidueNum = 4;
     filtMultTmThr = 0.0;
     filtChainTmThr = 0.0;
-    multimerPrefilterMode = 0;
     filtInterfaceLddtThr = 0;
     minAlignedChains = 2;
 
