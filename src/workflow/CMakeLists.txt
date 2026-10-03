@@ -10,6 +10,7 @@ set(workflow_source_files
         workflow/EasyMultimerSearch.cpp
         workflow/MultimerSearch.cpp
         workflow/MultimerCluster.cpp
+        workflow/FastMultimerCluster.cpp
         workflow/EasyMultimerCluster.cpp
         workflow/CreateDimerDb.cpp
         workflow/InterfaceSearch.cpp

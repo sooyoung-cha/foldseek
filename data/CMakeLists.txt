@@ -21,6 +21,7 @@ set(COMPILED_RESOURCES
         multimersearch.sh
         easymultimersearch.sh
         multimercluster.sh
+        fastmultimercluster.sh
         easymultimercluster.sh
         createdimerdb.sh
         createinterfacedb.sh

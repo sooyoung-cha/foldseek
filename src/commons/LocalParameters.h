@@ -149,6 +149,8 @@ public:
     std::vector<MMseqsParameter *> easymultimersearchworkflow;
     std::vector<MMseqsParameter *> createmultimerreport;
     std::vector<MMseqsParameter *> expandmultimer;
+    std::vector<MMseqsParameter *> multimerprefilter;
+    std::vector<MMseqsParameter *> fastmultimerclusterworkflow;
     std::vector<MMseqsParameter *> convert2pdb;
     std::vector<MMseqsParameter *> makepaddeddb;
     std::vector<MMseqsParameter *> result2structprofile;
@@ -199,6 +201,7 @@ public:
     PARAMETER(PARAM_MIN_INTERFACE_RESIDUE_PER_CHAIN)
     PARAMETER(PARAM_MULTIMER_TM_THRESHOLD)
     PARAMETER(PARAM_CHAIN_TM_THRESHOLD)
+    PARAMETER(PARAM_MULTIMER_PREFILTER_MODE)
     PARAMETER(PARAM_INTERFACE_LDDT_THRESHOLD)
     PARAMETER(PARAM_MIN_ALIGNED_CHAINS)
     PARAMETER(PARAM_MULTIDOMAIN)
@@ -238,6 +241,7 @@ public:
     int pdbOutputFormat;
     float filtMultTmThr;
     float filtChainTmThr;
+    int multimerPrefilterMode;
     float filtInterfaceLddtThr;
     std::string prostt5Model;
     float distanceThreshold;

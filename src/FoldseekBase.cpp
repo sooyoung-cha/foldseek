@@ -394,6 +394,20 @@ std::vector<Command> foldseekCommands = {
                                         {"tmpDir", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::directory }
                 }
         },     
+        {"fastmultimercluster", fastmultimercluster, &localPar.fastmultimerclusterworkflow, COMMAND_MAIN,
+                "Multimer level cluster, chain pre-clustering instead of an all-vs-all chain search",
+                "#Clustering of PDB DB\n"
+                "foldseek fastmultimercluster queryDB clusterDB tmp\n\n"
+                "#Chains are clustered first and multimers sharing a chain cluster composition\n"
+                "#become candidates, which replaces the chain level all-vs-all search.\n\n",
+                "Sooyoung Cha <ellen2g77@gmail.com>",
+                "<i:sequenceDB> <o:clusterDB> <tmpDir>",
+                CITATION_FOLDSEEK_MULTIMER, {
+                                        {"sequenceDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::sequenceDb},
+                                        {"clusterDB", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &FoldSeekDbValidator::clusterDb },
+                                        {"tmpDir", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::directory }
+                }
+        },
         {"easy-multimercluster", easymultimercluster, &localPar.easymultimerclusterworkflow, COMMAND_EASY,
                 "Multimer level cluster",
                 "#Clustering of PDB files\n"
@@ -558,6 +572,18 @@ std::vector<Command> foldseekCommands = {
         },
         {"createcomplexreport", createmultimerreport, &localPar.createmultimerreport, COMMAND_HIDDEN,
                 "", NULL, "", "", CITATION_FOLDSEEK_MULTIMER, {{"",DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, NULL}}
+        },
+        {"multimerprefilter", multimerprefilter, &localPar.multimerprefilter, COMMAND_PREFILTER,
+                "Re-prefilter multimers, keeping only chain pairs that can be matched one to one",
+                NULL,
+                "Sooyoung Cha <ellen2g77@gmail.com>",
+                "<i:queryDB> <i:targetDB> <i:alignmentDB> <o:prefilterDB>",
+                CITATION_FOLDSEEK_MULTIMER, {
+                                        {"queryDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::sequenceDb },
+                                        {"targetDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::sequenceDb },
+                                        {"alignmentDB", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA, &DbValidator::resultDb },
+                                        {"prefilterDB", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &FoldSeekDbValidator::prefilterDb }
+                                }
         },
         {"expandmultimer", expandmultimer, &localPar.expandmultimer, COMMAND_PREFILTER,
                 "Re-prefilter to ensure complete alignment between multimers",

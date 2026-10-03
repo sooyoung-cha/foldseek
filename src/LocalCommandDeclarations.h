@@ -31,6 +31,8 @@ extern int easyinterfacecluster(int argc, const char** argv, const Command &comm
 extern int easymultimersearch(int argc, const char **argv, const Command &command);
 extern int createmultimerreport(int argc, const char **argv, const Command &command);
 extern int expandmultimer(int argc, const char **argv, const Command &command);
+extern int multimerprefilter(int argc, const char **argv, const Command &command);
+extern int fastmultimercluster(int argc, const char** argv, const Command &command);
 extern int multimersearch(int argc, const char **argv, const Command &command);
 extern int makepaddeddb(int argc, const char **argv, const Command& command);
 extern int result2structprofile(int argc, const char **argv, const Command& command);
