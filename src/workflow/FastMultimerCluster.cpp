@@ -5,6 +5,8 @@
 #include "Util.h"
 #include "LocalParameters.h"
 #include "Debug.h"
+#include "PrefilteringIndexReader.h"
+#include <limits>
 #include "fastmultimercluster.sh.h"
 
 void setFastMultimerClusterDefaults(LocalParameters *p) {
@@ -75,8 +77,35 @@ int fastmultimercluster(int argc, const char **argv, const Command &command) {
     par.covThr = 0.0;
     par.compBiasCorrectionScale = 0.15;
     cmd.addVariable("PREFILTER_PAR", par.createParameterString(par.prefilter).c_str());
+    double origPrefEvalThr = par.evalThr;
+    par.evalThr = std::numeric_limits<double>::max();
+    cmd.addVariable("UNGAPPEDPREFILTER_PAR", par.createParameterString(par.ungappedprefilter).c_str());
+    par.evalThr = origPrefEvalThr;
     par.compBiasCorrectionScale = 1.0;
     par.covThr = origCovThr;
+
+    const bool isIndex = PrefilteringIndexReader::searchForIndex(par.db1).empty() == false;
+    cmd.addVariable("INDEXEXT", isIndex ? ".idx" : NULL);
+
+    // GPU can only use the ungapped prefilter
+    if (par.gpu == 1 && par.PARAM_PREF_MODE.wasSet == false) {
+        par.prefMode = Parameters::PREF_MODE_UNGAPPED;
+    }
+
+    switch(par.prefMode){
+        case LocalParameters::PREF_MODE_KMER:
+            cmd.addVariable("PREFMODE", "KMER");
+            break;
+        case LocalParameters::PREF_MODE_UNGAPPED:
+            cmd.addVariable("PREFMODE", "UNGAPPED");
+            break;
+        case LocalParameters::PREF_MODE_EXHAUSTIVE:
+            cmd.addVariable("PREFMODE", "EXHAUSTIVE");
+            break;
+    }
+    if(par.exhaustiveSearch){
+        cmd.addVariable("PREFMODE", "EXHAUSTIVE");
+    }
     cmd.addVariable("RUNNER", par.runner.c_str());
 
     cmd.addVariable("MULTIMERPREFILTER_PAR", par.createParameterString(par.multimerprefilter).c_str());
