@@ -45,6 +45,12 @@ LocalParameters::LocalParameters() :
         PARAM_CHAIN_TM_THRESHOLD(PARAM_CHAIN_TM_THRESHOLD_ID,"--chain-tm-threshold", "chain TMscore threshold for filtermultimer", "accept alignments with a tmsore > thr [0.0,1.0]",typeid(float), (void *) &filtChainTmThr, "^0(\\.[0-9]+)?|1(\\.0+)?$"),
         PARAM_INTERFACE_LDDT_THRESHOLD(PARAM_INTERFACE_LDDT_THRESHOLD_ID,"--interface-lddt-threshold", "Interface LDDT threshold", "accept alignments with a lddt > thr [0.0,1.0]",typeid(float), (void *) &filtInterfaceLddtThr, "^0(\\.[0-9]+)?|1(\\.0+)?$"),
         PARAM_MIN_ALIGNED_CHAINS(PARAM_MIN_ALIGNED_CHAINS_ID, "--min-aligned-chains", "Minimum threshold of aligned chains","save alignments with at least n chain aligned between query and target" ,typeid(int), (void *) &minAlignedChains, "^[0-9]{1}[0-9]*$"),
+        PARAM_MULTIMER_PREFILTER_MIN_SCORE(PARAM_MULTIMER_PREFILTER_MIN_SCORE_ID, "--multimer-prefilter-min-score", "Single strong chain hit score", "keep a multimer pair whose chains admit no one to one matching when its best chain hit scores at least this (0 to switch off)", typeid(int), (void *) &multimerPrefilterMinScore, "^[0-9]{1}[0-9]*$"),
+        PARAM_MULTIMER_PREFILTER_MODE(PARAM_MULTIMER_PREFILTER_MODE_ID, "--multimer-prefilter-mode", "Chain pairs to emit", "Chain pairs handed to the alignment:\n0: the whole cross product\n1: only the pairs of the matching that kept the multimer pair", typeid(int), (void *) &multimerPrefilterMode, "^[0-1]{1}$"),
+        PARAM_MULTIMER_PREFILTER_TOPK(PARAM_MULTIMER_PREFILTER_TOPK_ID, "--multimer-prefilter-topk", "Neighbours kept per multimer", "keep only the N best scoring candidate multimers of each query, so the work per multimer is a constant and does not grow with the database (0 to switch off)", typeid(int), (void *) &multimerPrefilterTopk, "^[0-9]{1}[0-9]*$"),
+        PARAM_MULTIMER_EXPAND_MODE(PARAM_MULTIMER_EXPAND_MODE_ID, "--multimer-expand-mode", "Expansion round", "What the expansion round emits:\n0: every multimer against the centres of its neighbours' clusters\n1: every centre against the other centres", typeid(int), (void *) &multimerExpandMode, "^[0-1]{1}$"),
+        PARAM_MULTIMER_EXPAND_TOPK(PARAM_MULTIMER_EXPAND_TOPK_ID, "--multimer-expand-topk", "Neighbours kept per expansion round", "candidates each expansion round may add per multimer", typeid(int), (void *) &multimerExpandTopk, "^[0-9]{1}[0-9]*$"),
+        PARAM_MULTIMER_EXPAND_ROUNDS(PARAM_MULTIMER_EXPAND_ROUNDS_ID, "--multimer-expand-rounds", "Expansion rounds", "how many rounds of each expansion mode to run", typeid(int), (void *) &multimerExpandRounds, "^[0-9]{1}[0-9]*$"),
         PARAM_MULTIDOMAIN(PARAM_MULTIDOMAIN_ID, "--lolalign-multidomain", "MultiDomain Mode", "MultiDomain Mode LoLalign", typeid(int), (void *) &multiDomain, "^[0-1]{1}$"),
         PARAM_VIEW_RESULTS(PARAM_VIEW_RESULTS_ID, "--view-structty", "View results with StrucTTY", "Launch StrucTTY viewer after result generation (requires a build with -DENABLE_STRUCTTY=1)",  typeid(bool), (void *) &viewResults, "", MMseqsParameter::COMMAND_ALIGN | MMseqsParameter::COMMAND_EXPERT),
         PARAM_STRUCTTY_MODE(PARAM_STRUCTTY_MODE_ID, "--structty-mode", "StrucTTY color mode", "Color mode for the StrucTTY viewer:\n0: protein\n1: chain\n2: rainbow\n3: plddt\n4: interface\n5: conservation\n6: align\n7: align-fs\n8: align-near", typeid(int), (void *) &structtyMode, "^[0-8]{1}$", MMseqsParameter::COMMAND_ALIGN | MMseqsParameter::COMMAND_EXPERT),
@@ -284,6 +290,25 @@ LocalParameters::LocalParameters() :
     expandmultimer.push_back(&PARAM_THREADS);
     expandmultimer.push_back(&PARAM_V);
 
+    // multimerprefilter
+    multimerprefilter.push_back(&PARAM_COV_MODE);
+    multimerprefilter.push_back(&PARAM_MULTIMER_PREFILTER_MIN_SCORE);
+    multimerprefilter.push_back(&PARAM_MULTIMER_PREFILTER_MODE);
+    multimerprefilter.push_back(&PARAM_MULTIMER_PREFILTER_TOPK);
+    multimerneighbors.push_back(&PARAM_MAX_SEQS);
+    multimerneighbors.push_back(&PARAM_THREADS);
+    multimerneighbors.push_back(&PARAM_COMPRESSED);
+    multimerneighbors.push_back(&PARAM_V);
+    multimerexpand.push_back(&PARAM_MULTIMER_EXPAND_TOPK);
+    multimerexpand.push_back(&PARAM_MULTIMER_EXPAND_MODE);
+    multimerexpand.push_back(&PARAM_THREADS);
+    multimerexpand.push_back(&PARAM_COMPRESSED);
+    multimerexpand.push_back(&PARAM_V);
+    multimerprefilter.push_back(&PARAM_CHAIN_TM_THRESHOLD);
+    multimerprefilter.push_back(&PARAM_THREADS);
+    multimerprefilter.push_back(&PARAM_COMPRESSED);
+    multimerprefilter.push_back(&PARAM_V);
+
     // convert2pdb
     convert2pdb.push_back(&PARAM_PDB_OUTPUT_MODE);
     convert2pdb.push_back(&PARAM_PDB_OUTPUT_FORMAT);
@@ -360,6 +385,13 @@ LocalParameters::LocalParameters() :
     // multimerclusterworkflow
     multimerclusterworkflow  = combineList(multimersearchworkflow, clust);
 
+    // linmultimerclusterworkflow; multimerexpand already carries
+    // --multimer-expand-topk and --multimer-expand-mode
+    linmultimerclusterworkflow = combineList(multimerclusterworkflow, multimerprefilter);
+    linmultimerclusterworkflow = combineList(linmultimerclusterworkflow, multimerexpand);
+    linmultimerclusterworkflow.push_back(&PARAM_MULTIMER_EXPAND_ROUNDS);
+    linmultimerclusterworkflow.push_back(&PARAM_EXPAND_MULTIMER_EVALUE);
+
     // interfacesearchworkflow
     interfacesearchworkflow  = combineList(multimersearchworkflow, createdimerdbworkflow);
     interfacesearchworkflow  = combineList(interfacesearchworkflow, createinterfacedb);
@@ -432,6 +464,12 @@ LocalParameters::LocalParameters() :
     minResidueNum = 4;
     filtMultTmThr = 0.0;
     filtChainTmThr = 0.0;
+    multimerPrefilterMinScore = 0;
+    multimerPrefilterMode = 0;
+    multimerPrefilterTopk = 0;
+    multimerExpandMode = 0;
+    multimerExpandTopk = 200;
+    multimerExpandRounds = 3;
     filtInterfaceLddtThr = 0;
     minAlignedChains = 2;
 

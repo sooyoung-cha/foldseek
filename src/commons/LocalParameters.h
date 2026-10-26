@@ -149,6 +149,10 @@ public:
     std::vector<MMseqsParameter *> easymultimersearchworkflow;
     std::vector<MMseqsParameter *> createmultimerreport;
     std::vector<MMseqsParameter *> expandmultimer;
+    std::vector<MMseqsParameter *> multimerprefilter;
+    std::vector<MMseqsParameter *> multimerexpand;
+    std::vector<MMseqsParameter *> multimerneighbors;
+    std::vector<MMseqsParameter *> linmultimerclusterworkflow;
     std::vector<MMseqsParameter *> convert2pdb;
     std::vector<MMseqsParameter *> makepaddeddb;
     std::vector<MMseqsParameter *> result2structprofile;
@@ -207,6 +211,12 @@ public:
     PARAMETER(PARAM_STRUCTTY_SS)
     PARAMETER(PARAM_CANDIDATE_SEEDS)
     PARAMETER(PARAM_REFINE_SEEDS)
+    PARAMETER(PARAM_MULTIMER_PREFILTER_MIN_SCORE)
+    PARAMETER(PARAM_MULTIMER_PREFILTER_MODE)
+    PARAMETER(PARAM_MULTIMER_PREFILTER_TOPK)
+    PARAMETER(PARAM_MULTIMER_EXPAND_MODE)
+    PARAMETER(PARAM_MULTIMER_EXPAND_TOPK)
+    PARAMETER(PARAM_MULTIMER_EXPAND_ROUNDS)
 
     float tmScoreThr;
     int tmScoreThrMode;
@@ -244,6 +254,12 @@ public:
     int minResidueNum;
     int prostt5SplitLength;
     int minAlignedChains;
+    int multimerPrefilterMinScore;
+    int multimerPrefilterMode;
+    int multimerPrefilterTopk;
+    int multimerExpandMode;
+    int multimerExpandTopk;
+    int multimerExpandRounds;
     int multiDomain;
     bool viewResults;
     int structtyMode;

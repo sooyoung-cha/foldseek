@@ -17,6 +17,9 @@ set(strucclustutils_source_files
         strucclustutils/createmultimerreport.cpp
         strucclustutils/MultimerUtil.h
         strucclustutils/expandmultimer.cpp
+        strucclustutils/multimerprefilter.cpp
+        strucclustutils/multimerexpand.cpp
+        strucclustutils/multimerneighbors.cpp
         strucclustutils/makepaddeddb.cpp
         strucclustutils/result2structprofile.cpp
         strucclustutils/createstructsubdb.cpp
