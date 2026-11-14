@@ -28,6 +28,78 @@ typedef std::map<unsigned int, chainName_t> chainKeyToChainName_t;
 typedef std::pair<unsigned int, unsigned int> chainToResidue;
 typedef std::map<std::pair<unsigned int, unsigned int>, std::string> alignmentLinesMap_t;
 
+// Chain groups, so the chain prefilter only has to run over one chain per group.
+//
+// Near identical chains have near identical hit lists, and computing each of them is the
+// quadratic stage of the workflow. linclust groups them, the prefilter runs over the group
+// representatives alone, and the hits are handed down here instead of being materialised:
+// at 10 M multimers the expanded list would be tens of billions of records.
+//
+// Two redirections, which is all a consumer of the chain prefilter needs:
+//   repOf(chainKey)    which record to read for a chain
+//   membersOf(repKey)  which chains a hit against a representative stands for
+//
+// This only decides which pairs are looked at. The alignment and scoremultimer still run
+// on the real chains, so a group that is not quite uniform cannot produce a wrong merge,
+// only a candidate that is then rejected.
+class ChainGroups {
+public:
+    ChainGroups() : loaded(false) {}
+
+    // cluDb is a DBTYPE_CLUSTER_RES over the chain keys: one record per group, keyed by
+    // the representative, holding the member keys.
+    void load(const std::string &cluDb, int threads) {
+        if (cluDb.empty()) {
+            return;
+        }
+        DBReader<unsigned int> reader(cluDb.c_str(), (cluDb + ".index").c_str(), threads,
+                                      DBReader<unsigned int>::USE_INDEX | DBReader<unsigned int>::USE_DATA);
+        reader.open(DBReader<unsigned int>::LINEAR_ACCCESS);
+        for (size_t i = 0; i < reader.getSize(); i++) {
+            const unsigned int rep = reader.getDbKey(i);
+            std::vector<unsigned int> &members = repToMembers[rep];
+            char *data = reader.getData(i, 0);
+            while (*data != '\0') {
+                char keyBuffer[255 + 1];
+                Util::parseKey(data, keyBuffer);
+                const unsigned int member = (unsigned int) strtoul(keyBuffer, NULL, 10);
+                members.emplace_back(member);
+                chainToRep[member] = rep;
+                data = Util::skipLine(data);
+            }
+        }
+        reader.close();
+        loaded = true;
+    }
+
+    bool enabled() const { return loaded; }
+
+    // the record to read for this chain; itself when the groups are off or it is unknown
+    unsigned int repOf(unsigned int chainKey) const {
+        if (loaded == false) {
+            return chainKey;
+        }
+        std::map<unsigned int, unsigned int>::const_iterator it = chainToRep.find(chainKey);
+        return (it == chainToRep.end()) ? chainKey : it->second;
+    }
+
+    // the chains a hit against repKey stands for, or NULL when repKey stands only for
+    // itself. A pointer rather than a reference to a fallback member, because every
+    // consumer of this reads it from all threads at once.
+    const std::vector<unsigned int> *membersOf(unsigned int repKey) const {
+        if (loaded == false) {
+            return NULL;
+        }
+        std::map<unsigned int, std::vector<unsigned int> >::const_iterator it = repToMembers.find(repKey);
+        return (it == repToMembers.end()) ? NULL : &it->second;
+    }
+
+private:
+    bool loaded;
+    std::map<unsigned int, unsigned int> chainToRep;
+    std::map<unsigned int, std::vector<unsigned int> > repToMembers;
+};
+
 struct Chain {
     Chain() {}
     Chain(unsigned int complexId, unsigned int chainKey) : complexId(complexId), chainKey(chainKey) {}

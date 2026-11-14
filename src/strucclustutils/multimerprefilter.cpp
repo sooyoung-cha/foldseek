@@ -180,6 +180,12 @@ int multimerprefilter(int argc, const char **argv, const Command &command) {
     dbComplexIndices.clear();
     qChainKeyToComplexIdMap.clear();
 
+    ChainGroups groups;
+    groups.load(par.chainGroups, par.threads);
+    if (groups.enabled()) {
+        Debug(Debug::INFO) << "Reading the chain prefilter through the chain groups\n";
+    }
+
     const int minScore = par.multimerPrefilterMinScore;
     const size_t topK = (size_t) par.multimerPrefilterTopk;
     // min(qTM, tTM) >= chainTmThr is impossible below this length ratio
@@ -219,7 +225,9 @@ int multimerprefilter(int argc, const char **argv, const Command &command) {
 
             dbComplexToHits.clear();
             for (size_t qChainIdx = 0; qChainIdx < qChainNum; qChainIdx++) {
-                const unsigned int qId = alnDbr.getId(qChainKeys[qChainIdx]);
+                // the prefilter only ran over the group representatives, so this
+                // chain's hits are the ones recorded for the representative of its group
+                const unsigned int qId = alnDbr.getId(groups.repOf(qChainKeys[qChainIdx]));
                 if (qId == NOT_AVAILABLE_CHAIN_KEY) {
                     continue;
                 }
@@ -227,36 +235,41 @@ int multimerprefilter(int argc, const char **argv, const Command &command) {
                 while (*data != '\0') {
                     char dbKeyBuffer[255 + 1];
                     Util::parseKey(data, dbKeyBuffer);
-                    const unsigned int dbChainKey = static_cast<unsigned int>(strtoul(dbKeyBuffer, NULL, 10));
-                    chainKeyToComplexId_t::const_iterator cIt = dbChainKeyToComplexIdMap.find(dbChainKey);
-                    if (cIt == dbChainKeyToComplexIdMap.end()) {
-                        data = Util::skipLine(data);
-                        continue;
-                    }
-                    const unsigned int dbComplexId = cIt->second;
-                    const std::vector<unsigned int> &dbChainKeys = dbComplexIdToChainKeysMap.at(dbComplexId);
-                    // position of this target chain inside its own multimer
-                    size_t dbChainIdx = dbChainKeys.size();
-                    for (size_t j = 0; j < dbChainKeys.size(); j++) {
-                        if (dbChainKeys[j] == dbChainKey) {
-                            dbChainIdx = j;
-                            break;
+                    const unsigned int dbRepKey = static_cast<unsigned int>(strtoul(dbKeyBuffer, NULL, 10));
+                    // a hit on a representative is a hit on every chain of its group
+                    const std::vector<unsigned int> *dbGroup = groups.membersOf(dbRepKey);
+                    const size_t dbGroupSize = (dbGroup == NULL) ? 1 : dbGroup->size();
+                    for (size_t g = 0; g < dbGroupSize; g++) {
+                        const unsigned int dbChainKey = (dbGroup == NULL) ? dbRepKey : (*dbGroup)[g];
+                        chainKeyToComplexId_t::const_iterator cIt = dbChainKeyToComplexIdMap.find(dbChainKey);
+                        if (cIt == dbChainKeyToComplexIdMap.end()) {
+                            continue;
                         }
-                    }
-                    if (dbChainIdx < dbChainKeys.size()) {
-                        int score = 0;
-                        if (minScore > 0 || topK > 0) {
-                            // second column of a prefilter or alignment record
-                            const char *p = data;
-                            while (*p != '\t' && *p != '\n' && *p != '\0') {
-                                p++;
-                            }
-                            if (*p == '\t') {
-                                score = (int) strtol(p + 1, NULL, 10);
+                        const unsigned int dbComplexId = cIt->second;
+                        const std::vector<unsigned int> &dbChainKeys = dbComplexIdToChainKeysMap.at(dbComplexId);
+                        // position of this target chain inside its own multimer
+                        size_t dbChainIdx = dbChainKeys.size();
+                        for (size_t j = 0; j < dbChainKeys.size(); j++) {
+                            if (dbChainKeys[j] == dbChainKey) {
+                                dbChainIdx = j;
+                                break;
                             }
                         }
-                        ChainHit hit = { qChainIdx, dbChainIdx, score };
-                        dbComplexToHits[dbComplexId].push_back(hit);
+                        if (dbChainIdx < dbChainKeys.size()) {
+                            int score = 0;
+                            if (minScore > 0 || topK > 0) {
+                                // second column of a prefilter or alignment record
+                                const char *p = data;
+                                while (*p != '\t' && *p != '\n' && *p != '\0') {
+                                    p++;
+                                }
+                                if (*p == '\t') {
+                                    score = (int) strtol(p + 1, NULL, 10);
+                                }
+                            }
+                            ChainHit hit = { qChainIdx, dbChainIdx, score };
+                            dbComplexToHits[dbComplexId].push_back(hit);
+                        }
                     }
                     data = Util::skipLine(data);
                 }

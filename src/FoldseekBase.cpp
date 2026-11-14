@@ -430,6 +430,31 @@ std::vector<Command> foldseekCommands = {
                                         {"clusterPrefix", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::flatfile},
                                         {"tmpDir", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::directory }
                 }
+        },
+        {"easy-linmultimercluster", easylinmultimercluster, &localPar.easylinmultimerclusterworkflow, COMMAND_EASY,
+                "Multimer level cluster in linear time",
+                "#Clustering of PDB files in linear time\n"
+                "foldseek easy-linmultimercluster examples/ result tmp\n"
+                "# Cluster output\n"
+                "#  - result_rep_seq.fasta: Representatives\n"
+                "#  - result_cluster.tsv:   Adjacency list\n\n"
+                "#Each multimer keeps a fixed number of candidates, so the work per multimer\n"
+                "#does not grow with the database, and expansion rounds recover the clusters\n"
+                "#that bound would otherwise split.\n\n"
+                "# Important parameter: --cov-mode and -c \n"
+                "#                  --cov-mode \n"
+                "#                  0    1    2\n"
+                "# Q: MAVGTACRPA  60%  IGN  60%\n"
+                "# T: -AVGTAC---  60% 100%  IGN\n"
+                "#        -c 0.7    -    +    -\n"
+                "#        -c 0.6    +    +    +\n\n",
+                "Sooyoung Cha <ellen2g77@gmail.com>",
+                "<i:PDB|mmCIF[.gz]> ... <i:PDB|mmCIF[.gz]> <o:clusterPrefix> <tmpDir>",
+                CITATION_FOLDSEEK_MULTIMER, {
+                                        {"PDB|mmCIF[.gz|.bz2]", DbType::ACCESS_MODE_INPUT, DbType::NEED_DATA|DbType::VARIADIC, &FoldSeekDbValidator::flatfileStdinAndFolder},
+                                        {"clusterPrefix", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::flatfile},
+                                        {"tmpDir", DbType::ACCESS_MODE_OUTPUT, DbType::NEED_DATA, &DbValidator::directory }
+                }
         },     
         {"interfacecluster", interfacecluster, &localPar.interfaceclusterworkflow, COMMAND_MAIN, 
                 "Interface level cluster",

@@ -153,6 +153,7 @@ public:
     std::vector<MMseqsParameter *> multimerexpand;
     std::vector<MMseqsParameter *> multimerneighbors;
     std::vector<MMseqsParameter *> linmultimerclusterworkflow;
+    std::vector<MMseqsParameter *> easylinmultimerclusterworkflow;
     std::vector<MMseqsParameter *> convert2pdb;
     std::vector<MMseqsParameter *> makepaddeddb;
     std::vector<MMseqsParameter *> result2structprofile;
@@ -217,6 +218,10 @@ public:
     PARAMETER(PARAM_MULTIMER_EXPAND_MODE)
     PARAMETER(PARAM_MULTIMER_EXPAND_TOPK)
     PARAMETER(PARAM_MULTIMER_EXPAND_ROUNDS)
+    PARAMETER(PARAM_ROUND0_SENSITIVITY)
+    PARAMETER(PARAM_CHAIN_GROUPS)
+    PARAMETER(PARAM_GROUP_PREFILTER)
+    PARAMETER(PARAM_GROUP_MIN_SEQ_ID)
 
     float tmScoreThr;
     int tmScoreThrMode;
@@ -260,6 +265,10 @@ public:
     int multimerExpandMode;
     int multimerExpandTopk;
     int multimerExpandRounds;
+    float round0Sensitivity;
+    std::string chainGroups;
+    int groupPrefilter;
+    float groupMinSeqId;
     int multiDomain;
     bool viewResults;
     int structtyMode;

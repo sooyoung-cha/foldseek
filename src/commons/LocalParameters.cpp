@@ -51,6 +51,10 @@ LocalParameters::LocalParameters() :
         PARAM_MULTIMER_EXPAND_MODE(PARAM_MULTIMER_EXPAND_MODE_ID, "--multimer-expand-mode", "Expansion round", "What the expansion round emits:\n0: every multimer against the centres of its neighbours' clusters\n1: every centre against the other centres", typeid(int), (void *) &multimerExpandMode, "^[0-1]{1}$"),
         PARAM_MULTIMER_EXPAND_TOPK(PARAM_MULTIMER_EXPAND_TOPK_ID, "--multimer-expand-topk", "Neighbours kept per expansion round", "candidates each expansion round may add per multimer", typeid(int), (void *) &multimerExpandTopk, "^[0-9]{1}[0-9]*$"),
         PARAM_MULTIMER_EXPAND_ROUNDS(PARAM_MULTIMER_EXPAND_ROUNDS_ID, "--multimer-expand-rounds", "Expansion rounds", "how many rounds of each expansion mode to run", typeid(int), (void *) &multimerExpandRounds, "^[0-9]{1}[0-9]*$"),
+        PARAM_CHAIN_GROUPS(PARAM_CHAIN_GROUPS_ID, "--chain-groups", "Chain groups", "a clustering of the chains whose representatives the chain prefilter was run over; hits against a representative are read as hits against every member of its group", typeid(std::string), (void *) &chainGroups, ""),
+        PARAM_GROUP_PREFILTER(PARAM_GROUP_PREFILTER_ID, "--group-prefilter", "Prefilter over chain groups", "group the near identical chains first and run the chain prefilter over one chain per group, which is the quadratic stage, then hand its hits down to the members (0 to switch off)", typeid(int), (void *) &groupPrefilter, "^[0-1]{1}$"),
+        PARAM_GROUP_MIN_SEQ_ID(PARAM_GROUP_MIN_SEQ_ID_ID, "--group-min-seq-id", "Chain group identity", "how alike two chains have to be to share one hit list under --group-prefilter; looser means fewer groups and a cheaper prefilter, at the risk of a member missing a hit its representative does not have", typeid(float), (void *) &groupMinSeqId, "^0(\\.[0-9]+)?|1(\\.0+)?$"),
+        PARAM_ROUND0_SENSITIVITY(PARAM_ROUND0_SENSITIVITY_ID, "--round0-sensitivity", "First round sensitivity", "run the first round chain prefilter at this -s instead of the -s the second pass over the representatives uses (0 to run both passes at -s)", typeid(float), (void *) &round0Sensitivity, "^[0-9]*(\\.[0-9]+)?$"),
         PARAM_MULTIDOMAIN(PARAM_MULTIDOMAIN_ID, "--lolalign-multidomain", "MultiDomain Mode", "MultiDomain Mode LoLalign", typeid(int), (void *) &multiDomain, "^[0-1]{1}$"),
         PARAM_VIEW_RESULTS(PARAM_VIEW_RESULTS_ID, "--view-structty", "View results with StrucTTY", "Launch StrucTTY viewer after result generation (requires a build with -DENABLE_STRUCTTY=1)",  typeid(bool), (void *) &viewResults, "", MMseqsParameter::COMMAND_ALIGN | MMseqsParameter::COMMAND_EXPERT),
         PARAM_STRUCTTY_MODE(PARAM_STRUCTTY_MODE_ID, "--structty-mode", "StrucTTY color mode", "Color mode for the StrucTTY viewer:\n0: protein\n1: chain\n2: rainbow\n3: plddt\n4: interface\n5: conservation\n6: align\n7: align-fs\n8: align-near", typeid(int), (void *) &structtyMode, "^[0-8]{1}$", MMseqsParameter::COMMAND_ALIGN | MMseqsParameter::COMMAND_EXPERT),
@@ -295,6 +299,8 @@ LocalParameters::LocalParameters() :
     multimerprefilter.push_back(&PARAM_MULTIMER_PREFILTER_MIN_SCORE);
     multimerprefilter.push_back(&PARAM_MULTIMER_PREFILTER_MODE);
     multimerprefilter.push_back(&PARAM_MULTIMER_PREFILTER_TOPK);
+    multimerprefilter.push_back(&PARAM_CHAIN_GROUPS);
+    multimerneighbors.push_back(&PARAM_CHAIN_GROUPS);
     multimerneighbors.push_back(&PARAM_MAX_SEQS);
     multimerneighbors.push_back(&PARAM_THREADS);
     multimerneighbors.push_back(&PARAM_COMPRESSED);
@@ -391,6 +397,9 @@ LocalParameters::LocalParameters() :
     linmultimerclusterworkflow = combineList(linmultimerclusterworkflow, multimerexpand);
     linmultimerclusterworkflow.push_back(&PARAM_MULTIMER_EXPAND_ROUNDS);
     linmultimerclusterworkflow.push_back(&PARAM_EXPAND_MULTIMER_EVALUE);
+    linmultimerclusterworkflow.push_back(&PARAM_ROUND0_SENSITIVITY);
+    linmultimerclusterworkflow.push_back(&PARAM_GROUP_PREFILTER);
+    linmultimerclusterworkflow.push_back(&PARAM_GROUP_MIN_SEQ_ID);
 
     // interfacesearchworkflow
     interfacesearchworkflow  = combineList(multimersearchworkflow, createdimerdbworkflow);
@@ -406,6 +415,10 @@ LocalParameters::LocalParameters() :
     //easymultimerclusterworkflow
     easymultimerclusterworkflow = combineList(structurecreatedb, multimerclusterworkflow);
     easymultimerclusterworkflow = combineList(easymultimerclusterworkflow, result2repseq);
+
+    //easylinmultimerclusterworkflow
+    easylinmultimerclusterworkflow = combineList(structurecreatedb, linmultimerclusterworkflow);
+    easylinmultimerclusterworkflow = combineList(easylinmultimerclusterworkflow, result2repseq);
 
     // easyinterfaceclusterworkflow
     easyinterfaceclusterworkflow  = combineList(easymultimerclusterworkflow, interfaceclusterworkflow);
@@ -470,6 +483,10 @@ LocalParameters::LocalParameters() :
     multimerExpandMode = 0;
     multimerExpandTopk = 200;
     multimerExpandRounds = 3;
+    round0Sensitivity = 0.0;
+    chainGroups = "";
+    groupPrefilter = 0;
+    groupMinSeqId = 0.7;
     filtInterfaceLddtThr = 0;
     minAlignedChains = 2;
 

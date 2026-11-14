@@ -23,6 +23,7 @@ set(COMPILED_RESOURCES
         multimercluster.sh
         linmultimercluster.sh
         easymultimercluster.sh
+        easylinmultimercluster.sh
         createdimerdb.sh
         createinterfacedb.sh
         interfacesearch.sh

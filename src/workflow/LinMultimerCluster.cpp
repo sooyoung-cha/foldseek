@@ -18,6 +18,21 @@ void setLinMultimerClusterDefaults(LocalParameters *p) {
     // see a true neighbour is 97.6% at -s 9.5 and 97.5% at -s 6.0, for 248 s against 26 s.
     p->kmerSize = 0;
     p->sensitivity = 6.0;
+    // The chain prefilter runs twice, cheaply over everything and then at full -s over
+    // what the first pass could not cluster, so the first pass does not have to be right
+    // on its own. Measured on 51,770 family sampled dimers: one -s 6.0 prefilter costs
+    // 17 s and leaves 2.22% of the representatives with a TM 0.7 neighbour still out
+    // there; -s 4.0 followed by the pass over the representatives costs 5 s + 4 s and
+    // leaves 2.25%. Half the candidate generation, same clustering.
+    p->round0Sensitivity = 4.0;
+    // The first pass is the quadratic stage, so it is also run over as few chains as
+    // possible: linclust groups the near identical ones and the prefilter sees one chain
+    // per group. Measured on the same set, 103,540 chains collapse to 67,097 groups and
+    // the first pass goes 5 s to 2 s at the same 1.1% rep-rep. The collapse is a property
+    // of the database, not of its size: the whole 20,179,006 chain teddymer database
+    // collapses to 66.5%, the same ratio, and the stage it makes cheaper is the one that
+    // grows quadratically, so it is worth more the bigger the input is.
+    p->groupPrefilter = 1;
     p->maxResListLen = 1000;
     p->filtMultTmThr = 0.7;
     p->filtChainTmThr = 0.7;
@@ -85,6 +100,17 @@ int linmultimercluster(int argc, const char **argv, const Command &command) {
     float origCovThr = par.covThr;
     par.covThr = 0.0;
     par.compBiasCorrectionScale = 0.15;
+    // Two prefilter strings, because the chain prefilter runs twice: PREFILTER0_PAR over
+    // the whole database at --round0-sensitivity, PREFILTER_PAR over the multimers it
+    // left unclustered, at the -s the caller asked for. --round0-sensitivity 0 puts the
+    // first pass back at -s as well, which is the way to pay for the cascade's second
+    // pass without taking the discount on the first.
+    float origSens = par.sensitivity;
+    if (par.round0Sensitivity > 0.0f) {
+        par.sensitivity = par.round0Sensitivity;
+    }
+    cmd.addVariable("PREFILTER0_PAR", par.createParameterString(par.prefilter).c_str());
+    par.sensitivity = origSens;
     cmd.addVariable("PREFILTER_PAR", par.createParameterString(par.prefilter).c_str());
     double origPrefEvalThr = par.evalThr;
     par.evalThr = std::numeric_limits<double>::max();
@@ -115,6 +141,69 @@ int linmultimercluster(int argc, const char **argv, const Command &command) {
     if(par.exhaustiveSearch){
         cmd.addVariable("PREFMODE", "EXHAUSTIVE");
     }
+    // The cheap first round leaves a multimer that found no true neighbour joined to
+    // nothing, which makes it its own representative. The representatives are therefore
+    // exactly the input of a second, deeper pass, and there are far fewer of them, so the
+    // quadratic prefilter costs (reps/all)^2 of what it would have cost on the whole set.
+    // Only the exhaustive prefilter skips it: that one already compared every pair.
+    int origSubDbMode = par.subDbMode;
+    par.subDbMode = Parameters::SUBDB_MODE_SOFT;
+    cmd.addVariable("CREATESUBDB_PAR", par.createParameterString(par.createsubdb).c_str());
+    par.subDbMode = origSubDbMode;
+    // Near identical chains have near identical hit lists, so the quadratic stage is
+    // computing the same list many times. linclust groups them and the chain prefilter
+    // runs over one chain per group; multimerprefilter and multimerneighbors read the
+    // representative's record for every member and read a hit on a representative as a
+    // hit on its whole group, so the expanded list is never materialised. Measured on
+    // 51,770 family sampled dimers: 103,540 chains collapse to 67,097 groups, the chain
+    // prefilter goes 6 s to 2 s and rep-rep at TM 0.7 goes 1.13% to 1.07%. The grouping
+    // only picks which pairs are looked at; the alignment and scoremultimer still run on
+    // the real chains, so a group that is not uniform costs a rejected candidate, never
+    // a wrong merge.
+    //
+    // A GPU run is the exception: there the prefilter reads a padded database that
+    // createsubdb cannot carve the group representatives out of, so the grouping steps
+    // aside and the prefilter sees every chain, as it did before.
+    if (par.gpu == 1 && par.groupPrefilter == 1) {
+        if (par.PARAM_GROUP_PREFILTER.wasSet) {
+            Debug(Debug::WARNING) << "--group-prefilter does not work on a GPU database, switching it off\n";
+        }
+        par.groupPrefilter = 0;
+    }
+    cmd.addVariable("GROUP_PREFILTER", par.groupPrefilter == 1 ? "TRUE" : NULL);
+    if (par.groupPrefilter == 1) {
+        // A group has to mean "the same hit list", because its members share one.
+        // That is a question about the 3Di k-mers the prefilter probes with, not about
+        // structural similarity, which is why the threshold here is linclust's own and
+        // is not tied to --chain-tm-threshold. 0.7 is what was measured: 103,540 chains
+        // collapse to 67,097 groups on the family sampled set, the same collapse the
+        // whole 20,179,006 chain database gives (66.5%), so the speedup carries over.
+        //
+        // Everything linclust reads has to be pinned back to linclust's own defaults,
+        // because createParameterString serialises whatever the workflow has already
+        // tuned for its other stages. Three of them were measured leaking in here:
+        // --set-mode 1 segfaults linclust's clustering, -e 10 and --spaced-kmer-mode 1
+        // each group far more loosely than the 0.7 that was measured (103,540 chains to
+        // 63,210 groups instead of 67,097, and rep-rep at TM 0.7 from 1.07% to 1.44%).
+        float origSeqId = par.seqIdThr, origCov = par.covThr;
+        int origCovMode = par.covMode, origSetMode = par.clusteringSetMode;
+        int origSpaced = par.spacedKmer;
+        double origE = par.evalThr;
+        par.clusteringSetMode = 0;
+        par.evalThr = 0.001;
+        par.spacedKmer = 0;
+        par.seqIdThr = par.groupMinSeqId;
+        par.covThr = 0.8;
+        par.covMode = Parameters::COV_MODE_BIDIRECTIONAL;
+        par.PARAM_MIN_SEQ_ID.wasSet = true;
+        par.PARAM_C.wasSet = true;
+        par.PARAM_COV_MODE.wasSet = true;
+        par.PARAM_E.wasSet = true;
+        cmd.addVariable("LINCLUST_PAR", par.createParameterString(par.linclustworkflow).c_str());
+        par.seqIdThr = origSeqId; par.covThr = origCov; par.covMode = origCovMode;
+        par.clusteringSetMode = origSetMode; par.evalThr = origE;
+        par.spacedKmer = origSpaced;
+    }
     cmd.addVariable("RUNNER", par.runner.c_str());
 
     // Rounds of mode 0, which lets a cluster grow past what a top-k graph can hold, then
@@ -131,10 +220,27 @@ int linmultimercluster(int argc, const char **argv, const Command &command) {
     // one string per mode, so the schedule can pick without repeating the flag
     int origMode = par.multimerExpandMode;
     par.multimerExpandMode = 0;
-    cmd.addVariable("MULTIMERNEIGHBORS_PAR", par.createParameterString(par.multimerneighbors).c_str());
     cmd.addVariable("MULTIMEREXPAND_PAR0", par.createParameterString(par.multimerexpand).c_str());
     par.multimerExpandMode = 1;
     cmd.addVariable("MULTIMEREXPAND_PAR1", par.createParameterString(par.multimerexpand).c_str());
+    par.multimerExpandMode = origMode;
+
+    // The second pass over the representatives is the safety net of the cascade, so it
+    // is run exactly, on the real chain keys, and the stages that read it are given the
+    // ungrouped parameter strings. Only round 0 goes through the groups.
+    par.multimerExpandMode = 0;
+    cmd.addVariable("MULTIMERNEIGHBORS_PAR2", par.createParameterString(par.multimerneighbors).c_str());
+    par.multimerExpandMode = origMode;
+    cmd.addVariable("MULTIMERPREFILTER_PAR2", par.createParameterString(par.multimerprefilter).c_str());
+
+    // The two stages that read round 0's chain prefilter have to know the groups;
+    // everything downstream of them sees ordinary chain keys again.
+    if (par.groupPrefilter == 1) {
+        par.chainGroups = tmpDir + "/cgroups";
+        par.PARAM_CHAIN_GROUPS.wasSet = true;
+    }
+    par.multimerExpandMode = 0;
+    cmd.addVariable("MULTIMERNEIGHBORS_PAR", par.createParameterString(par.multimerneighbors).c_str());
     par.multimerExpandMode = origMode;
     cmd.addVariable("MULTIMERPREFILTER_PAR", par.createParameterString(par.multimerprefilter).c_str());
 

@@ -12,6 +12,7 @@ set(workflow_source_files
         workflow/MultimerCluster.cpp
         workflow/LinMultimerCluster.cpp
         workflow/EasyMultimerCluster.cpp
+        workflow/EasyLinMultimerCluster.cpp
         workflow/CreateDimerDb.cpp
         workflow/InterfaceSearch.cpp
         workflow/EasyInterfaceSearch.cpp

@@ -44,6 +44,12 @@ int multimerneighbors(int argc, const char **argv, const Command &command) {
     getKeyToIdMapIdToKeysMapIdVec(qDbr, par.db1 + ".lookup", chainKeyToComplexIdMap,
                                   complexIdToChainKeysMap, qComplexIndices);
 
+    ChainGroups groups;
+    groups.load(par.chainGroups, par.threads);
+    if (groups.enabled()) {
+        Debug(Debug::INFO) << "Reading the chain prefilter through the chain groups\n";
+    }
+
     const size_t cap = (size_t) par.maxResListLen;
     Debug(Debug::INFO) << "Folding the chain prefilter to multimer level, at most "
                        << cap << " neighbours each\n";
@@ -63,7 +69,8 @@ int multimerneighbors(int argc, const char **argv, const Command &command) {
             const std::vector<unsigned int> &qChainKeys = complexIdToChainKeysMap.at(qComplexId);
             best.clear();
             for (size_t i = 0; i < qChainKeys.size(); i++) {
-                const unsigned int qId = alnDbr.getId(qChainKeys[i]);
+                // see multimerprefilter: the record belongs to the group representative
+                const unsigned int qId = alnDbr.getId(groups.repOf(qChainKeys[i]));
                 if (qId == NOT_AVAILABLE_CHAIN_KEY) {
                     continue;
                 }
@@ -71,22 +78,26 @@ int multimerneighbors(int argc, const char **argv, const Command &command) {
                 while (*data != '\0') {
                     char keyBuffer[255 + 1];
                     Util::parseKey(data, keyBuffer);
-                    const unsigned int tChainKey = (unsigned int) strtoul(keyBuffer, NULL, 10);
-                    chainKeyToComplexId_t::const_iterator c = chainKeyToComplexIdMap.find(tChainKey);
-                    if (c == chainKeyToComplexIdMap.end() || c->second == qComplexId) {
-                        data = Util::skipLine(data);
-                        continue;
-                    }
+                    const unsigned int tRepKey = (unsigned int) strtoul(keyBuffer, NULL, 10);
                     const char *p = data;
                     while (*p != '\t' && *p != '\n' && *p != '\0') {
                         p++;
                     }
                     const int score = (*p == '\t') ? (int) strtol(p + 1, NULL, 10) : 0;
-                    std::map<unsigned int, int>::iterator f = best.find(c->second);
-                    if (f == best.end()) {
-                        best[c->second] = score;
-                    } else if (score > f->second) {
-                        f->second = score;
+                    const std::vector<unsigned int> *tGroup = groups.membersOf(tRepKey);
+                    const size_t tGroupSize = (tGroup == NULL) ? 1 : tGroup->size();
+                    for (size_t g = 0; g < tGroupSize; g++) {
+                        const unsigned int tChainKey = (tGroup == NULL) ? tRepKey : (*tGroup)[g];
+                        chainKeyToComplexId_t::const_iterator c = chainKeyToComplexIdMap.find(tChainKey);
+                        if (c == chainKeyToComplexIdMap.end() || c->second == qComplexId) {
+                            continue;
+                        }
+                        std::map<unsigned int, int>::iterator f = best.find(c->second);
+                        if (f == best.end()) {
+                            best[c->second] = score;
+                        } else if (score > f->second) {
+                            f->second = score;
+                        }
                     }
                     data = Util::skipLine(data);
                 }
