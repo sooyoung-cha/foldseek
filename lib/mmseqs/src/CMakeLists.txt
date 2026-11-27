@@ -55,6 +55,12 @@ target_include_directories(mmseqs-framework PUBLIC taxonomy)
 target_include_directories(mmseqs-framework PUBLIC util)
 target_include_directories(mmseqs-framework PUBLIC .)
 
+if (NOT (MMSEQS_AVX512_DISPATCH_FLAGS STREQUAL ""))
+    # PUBLIC: the dispatch lives inline in UngappedAligner.h/Fwbw.h, so every includer
+    # (including the test targets) needs to see the same decision.
+    target_compile_definitions(mmseqs-framework PUBLIC -DMMSEQS_HAVE_AVX512_DISPATCH=1)
+endif ()
+
 if (USE_PCH)
     if (CMAKE_VERSION VERSION_LESS "3.16")
         message(WARNING "-- USE_PCH needs CMake >= 3.16, ignoring")
@@ -163,9 +169,9 @@ else ()
 endif ()
 
 target_link_libraries(mmseqs-framework tinyexpr ${ZSTD_LIBRARIES} microtar tantan block_aligner_c)
-# if (CYGWIN)
-#     target_link_libraries(mmseqs-framework nedmalloc)
-# endif ()
+if (CYGWIN)
+    target_link_libraries(mmseqs-framework nedmalloc)
+endif ()
 
 if (EMSCRIPTEN)
     target_compile_definitions(mmseqs-framework PUBLIC -DHAVE_ZLIB=1 -DHAVE_BZLIB=1)
@@ -275,6 +281,12 @@ if (HAVE_GPROF)
     else ()
         message(FATAL_ERROR "-- Could not find GPROF")
     endif ()
+endif ()
+
+if (ENABLE_METAL)
+    # Metal reuses the HAVE_CUDA GPU prefilter path; HAVE_METAL marks what Metal cannot do
+    target_compile_definitions(mmseqs-framework PUBLIC -DHAVE_CUDA=1 -DHAVE_METAL=1)
+    target_link_libraries(mmseqs-framework marv)
 endif ()
 
 if (ENABLE_CUDA)

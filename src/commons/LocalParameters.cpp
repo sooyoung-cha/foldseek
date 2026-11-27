@@ -111,7 +111,8 @@ LocalParameters::LocalParameters() :
     structurecreatedb.push_back(&PARAM_CHAIN_NAME_MODE);
     structurecreatedb.push_back(&PARAM_MODEL_NAME_MODE);
     structurecreatedb.push_back(&PARAM_WRITE_MAPPING);
-    structurecreatedb.push_back(&PARAM_WRITE_FOLDCOMP);
+    // Disabled for Release 11
+    // structurecreatedb.push_back(&PARAM_WRITE_FOLDCOMP);
     structurecreatedb.push_back(&PARAM_MASK_BFACTOR_THRESHOLD);
     structurecreatedb.push_back(&PARAM_COORD_STORE_MODE);
     structurecreatedb.push_back(&PARAM_SAVE_RES_INDEX);
@@ -150,6 +151,7 @@ LocalParameters::LocalParameters() :
     lolalign.push_back(&PARAM_MULTIDOMAIN);
     lolalign.push_back(&PARAM_CANDIDATE_SEEDS);
     lolalign.push_back(&PARAM_REFINE_SEEDS);
+    lolalign.push_back(&PARAM_FWBW_SCALED_MODE);
     lolalign.push_back(&PARAM_MIN_SEQ_ID);
     lolalign.push_back(&PARAM_PRELOAD_MODE);
     lolalign.push_back(&PARAM_MAX_REJECTED);
@@ -508,6 +510,9 @@ LocalParameters::LocalParameters() :
     citations.emplace(CITATION_FOLDSEEK, "van Kempen, M., Kim, S.S., Tumescheit, C., Mirdita, M., Lee, J., Gilchrist, C.L.M., Söding, J., and Steinegger, M. Fast and accurate protein structure search with Foldseek. Nature Biotechnology, doi:10.1038/s41587-023-01773-0 (2023)");
     citations.emplace(CITATION_FOLDSEEK_MULTIMER, "Kim, W., Mirdita, M., Levy Karin, E., Gilchrist, C.L.M., Schweke, H., Söding, J., Levy, E., and Steinegger, M. Rapid and sensitive protein complex alignment with Foldseek-Multimer. Nature Methods, doi:10.1038/s41592-025-02593-7 (2025)");
     citations.emplace(CITATION_PROSTT5, "Heinzinger, M., Weissenow, K., Gomez Sanchez, J., Henkel, A., Mirdita, M., Steinegger, M., and Burkhard, R. Bilingual Language Model for Protein Sequence and Structure. NAR Genomics and Bioinformatics, doi:10.1093/nargab/lqae150 (2024)");
+    citations.emplace(CITATION_LOLALIGN, "Reifenrath, L., van Kempen, M., Kim, G., Kim, S.H., Radnezhad, M., Gilchrist, C.L.M., Mirdita, M., Steinegger, M., and Söding, J. LoL-align: sensitive and fast probabilistic protein structure alignment. Nature Methods, doi:10.1038/s41592-026-03249-w (2026)");
+    citations.emplace(CITATION_FOLDSEEK_INTERFACE, "Strom, J.M., Cha, S., Kim, R.S., Sajal, H., Gilchrist, C.L.M., Steinegger, M., and Luck, K. Foldseek-Interface reveals a protein interface universe far from complete. bioRxiv, doi:10.64898/2026.08.24.746585 (2026)");
+    citations.emplace(CITATION_STRUCTTY, "Jang, L.S., Cha, S., and Steinegger, M. StrucTTY: An Interactive, Terminal-Native Protein Structure Viewer. bioRxiv, doi:10.64898/2026.03.17.712308 (2026)");
     
     //rewrite param vals.
     PARAM_FORMAT_OUTPUT.description = "Choose comma separated list of output columns from: query,target,evalue,gapopen,pident,fident,nident,qstart,qend,qlen\ntstart,tend,tlen,alnlen,raw,bits,cigar,qseq,tseq,q3di,t3di,qheader,theader,qaln,taln,q3dialn,t3dialn,mismatch,qcov,tcov\nqset,qsetid,tset,tsetid,taxid,taxname,taxlineage,\nlddt,lddtfull,qca,tca,t,u,qtmscore,ttmscore,alntmscore,rmsd,prob\ncomplexqtmscore,complexttmscore,complexu,complext,qcomplexcoverage,tcomplexcoverage,qchaintms,tchaintms,qchains,tchains,interfacelddt,complexassignid\nqkey,tkey\n";
